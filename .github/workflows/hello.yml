@@ -18,7 +18,7 @@ jobs:
 
       - name: Print current time and date
         run: |
-          date
+          echo "Current date and time: $(date +'%Y-%m-%d %H:%M:%S')"
 
       - name: List directory contents
         run: |
