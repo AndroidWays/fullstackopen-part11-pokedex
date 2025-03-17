@@ -9,11 +9,17 @@ jobs:
   hello_world_job:
     runs-on: ubuntu-20.04
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
       - name: Say hello
-        run: echo "Hello World!"
-        
-      - name: Print current date
-        run: date
+        run: |
+          echo "Hello World!"
+
+      - name: Print current time and date
+        run: |
+          date
 
       - name: List directory contents
-        run: ls -l
+        run: |
+          ls -l
