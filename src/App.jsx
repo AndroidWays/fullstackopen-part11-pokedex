@@ -1,6 +1,5 @@
 import React from 'react'
 import {
-  BrowserRouter as Router,
   Routes,
   Route,
   useMatch,
@@ -29,6 +28,7 @@ const App = () => {
   if (isLoading) {
     return <LoadingSpinner />
   }
+
   if (error) {
     return <ErrorMessage error={error} />
   }
@@ -36,9 +36,9 @@ const App = () => {
   let next = null
   let previous = null
 
-  if (match && match.params) {
+  if (match?.params) {
     const pokemonId = pokemonList.find(
-      ({ name }) => name === match.params.name,
+      ({ name }) => name === match.params.name
     ).id
     previous = pokemonList.find(({ id }) => id === pokemonId - 1)
     next = pokemonList.find(({ id }) => id === pokemonId + 1)
@@ -47,12 +47,10 @@ const App = () => {
   return (
     <Routes>
       <Route
-        exact
         path="/"
         element={<PokemonList pokemonList={pokemonList} />}
       />
       <Route
-        exact
         path="/pokemon/:name"
         element={
           <PokemonPage

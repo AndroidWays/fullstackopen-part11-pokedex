@@ -14,6 +14,7 @@ const PokemonPage = ({ previous, next }) => {
     if (isLoading) {
         return <LoadingSpinner />;
     }
+
     if (error) {
         return <ErrorMessage error={error} />;
     }
@@ -25,10 +26,9 @@ const PokemonPage = ({ previous, next }) => {
             value: stat.base_stat,
         }))
         .reverse();
+
     const normalAbility = pokemon.abilities.find((ability) => !ability.is_hidden);
     const hiddenAbility = pokemon.abilities.find((ability) => ability.is_hidden === true);
-
-    console.log('hiddenAbility=', hiddenAbility);
 
     return (
         <>
