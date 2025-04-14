@@ -1,4 +1,5 @@
 # Exercise 11.1: Warming Up
+
 Let’s say we’re building a Python app with a team of six. Python’s a great pick—it’s flexible, has tons of libraries, and is easy to learn. But how do we set up a CI pipeline for it? Let’s talk tools and decisions.
 
 Linting, Testing, and Building
