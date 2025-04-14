@@ -36,7 +36,7 @@ const App = () => {
   let next = null
   let previous = null
 
-  if (match?.params) {
+  if (match && match.params) {
     const pokemonId = pokemonList.find(
       ({ name }) => name === match.params.name
     ).id
