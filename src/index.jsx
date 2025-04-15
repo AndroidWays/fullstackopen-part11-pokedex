@@ -5,9 +5,9 @@ import App from './App';
 import './styles.css';
 
 ReactDOM.createRoot(document.getElementById('app')).render(
-    <BrowserRouter
-        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-    >
-        <App />
-    </BrowserRouter>
+    <React.StrictMode>
+        <BrowserRouter>
+            <App />
+        </BrowserRouter>
+    </React.StrictMode>
 );

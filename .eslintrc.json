@@ -16,7 +16,7 @@
     "plugins": ["react", "jest"],
     "rules": {
         "indent": ["error", 4], // Enforces 4 spaces for indentation
-        "linebreak-style": ["error", "unix"],
+        "linebreak-style": 0,
         "quotes": ["error", "single"],
         "semi": ["error", "always"],
         "eqeqeq": "error",

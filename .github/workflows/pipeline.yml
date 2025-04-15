@@ -18,6 +18,9 @@ jobs:
             - name: Install dependencies
               run: npm install
 
+            - name: Install Playwright dependencies
+              run: npx playwright install
+
             - name: Check style
               run: npm run eslint
 
@@ -26,3 +29,6 @@ jobs:
 
             - name: Run tests
               run: npm test
+
+            - name: Run Playwright tests
+              run: npx playwright test
