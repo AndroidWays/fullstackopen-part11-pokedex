@@ -1,4 +1,5 @@
-name: Deploy to Render
+name: CI/CD Pipeline
+
 on:
     push:
         branches: [main]
@@ -8,18 +9,39 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
+
             - uses: actions/setup-node@v4
               with:
-                  node-version: 20
-            - run: npm ci
-            - run: npm run build
-            - run: npm test
+                  node-version: '20'
+
+            - name: Cache node modules
+              uses: actions/cache@v3
+              with:
+                  path: ~/.npm
+                  key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Install Playwright
+              run: npx playwright install --with-deps
+
+            - name: Lint code
+              run: npm run lint
+
+            - name: Build project
+              run: npm run build
+
+            - name: Run unit tests
+              run: npm test
+
+            - name: Run E2E tests
+              run: npm run test:e2e
 
     deploy:
         needs: test
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
             - name: Trigger Render Deployment
               run: |
                   curl -X POST \
