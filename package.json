@@ -5,11 +5,13 @@
     "main": "src/index.js",
     "scripts": {
         "start": "webpack-dev-server --open --mode development",
+        "build:render": "powershell -Command \"npm install && npm run build\"",
         "start-prod": "node app.js",
         "test": "jest",
         "test:e2e": "playwright test",
         "eslint": "eslint \"src/**/*.{js,jsx}\" app.js",
-        "build": "webpack --mode production"
+        "build": "webpack --mode production",
+        "render-build": "npm install && npm run build"
     },
     "repository": {
         "type": "git",
