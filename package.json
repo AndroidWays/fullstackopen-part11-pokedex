@@ -10,7 +10,9 @@
         "test:e2e": "playwright test",
         "eslint": "eslint \"src/**/*.{js,jsx}\" app.js",
         "build": "webpack --mode production",
-        "render-build": "npm install && npm run build"
+        "render-build": "npm install && npm run build",
+        "lint": "eslint \"src/**/*.{js,jsx}\" \"server/**/*.js\"",
+        "lint:fix": "eslint \"src/**/*.{js,jsx}\" \"server/**/*.js\" --fix"
     },
     "repository": {
         "type": "git",

@@ -25,12 +25,14 @@ app.get('/version', (req, res) => res.send('1.0.0'));
 app.get('*', (req, res) => {
     res.sendFile(INDEX_PATH, err => {
         if (err) {
-            console.error('Error sending file:', err);
+            const debug = require('debug')('app:error');
+            debug('Error sending file:', err);
             res.status(404).send('File not found');
         }
     });
 });
 
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    const debug = require('debug')('app');
+    debug(`Server running on port ${PORT}`);
 });
