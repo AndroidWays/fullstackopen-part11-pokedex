@@ -5,7 +5,6 @@
     "main": "src/index.js",
     "scripts": {
         "start": "webpack-dev-server --open --mode development",
-        "build:render": "powershell -Command \"npm install && npm run build\"",
         "start-prod": "node app.js",
         "test": "jest",
         "test:e2e": "playwright test",
