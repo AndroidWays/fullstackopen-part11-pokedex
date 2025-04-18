@@ -39,14 +39,14 @@ jobs:
               run: npm run test:e2e
 
             - name: Upload production build
-              if: github.event_name == 'push' && env.SKIP_DEPLOY == 'false'
+              if: github.event_name == 'push' && !contains(join(github.event.commits.*.message, ' '), '#skip')
               uses: actions/upload-artifact@v4
               with:
                   name: production-build
                   path: dist/
 
     deploy:
-        if: github.event_name == 'push' && env.SKIP_DEPLOY == 'false'
+        if: github.event_name == 'push' && !contains(join(github.event.commits.*.message, ' '), '#skip')
         needs: test
         runs-on: ubuntu-latest
         steps:
@@ -101,7 +101,7 @@ jobs:
                   RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
 
     tag_release:
-        if: github.event_name == 'push' && env.SKIP_DEPLOY == 'false'
+        if: github.event_name == 'push' && !contains(join(github.event.commits.*.message, ' '), '#skip')
         needs: [test, deploy]
         runs-on: ubuntu-latest
         steps:
