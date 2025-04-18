@@ -59,20 +59,35 @@ jobs:
 
             - name: Deploy to Render
               run: |
-                  echo "Service ID: srv-${{ secrets.RENDER_SERVICE_ID }}"
+                  echo "Service ID: ${{ secrets.RENDER_SERVICE_ID }}"
                   echo "Triggering Render deployment..."
 
+                  # First verify the service exists
+                  echo "Checking service status..."
+                  service_status=$(curl -s -o /dev/null -w "%{http_code}" \
+                    "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}" \
+                    -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}")
+                    
+                  if [ "$service_status" -ne 200 ]; then
+                    echo "Error: Service not found (HTTP $service_status)"
+                    echo "Verify your Service ID is correct and API key has access"
+                    exit 1
+                  fi
+
+                  # Trigger deployment
+                  echo "Starting deployment..."
                   response_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-                    "https://api.render.com/deploy/srv-${{ secrets.RENDER_SERVICE_ID }}?key=${{ secrets.RENDER_API_KEY }}")
+                    "https://api.render.com/deploy/${{ secrets.RENDER_SERVICE_ID }}?key=${{ secrets.RENDER_API_KEY }}")
 
                   if [ "$response_code" -eq 200 ]; then
-                    echo "Deployment triggered successfully!"
+                    echo "✅ Deployment triggered successfully!"
+                    echo "Check progress in Render dashboard"
                   else
-                    echo "Failed to trigger deployment. HTTP status: $response_code"
-                    echo "Possible issues:"
-                    echo "1. Invalid Service ID or API Key"
-                    echo "2. API Key doesn't have deploy permissions"
-                    echo "3. Service doesn't exist in your Render account"
+                    echo "❌ Failed to trigger deployment (HTTP $response_code)"
+                    echo "Troubleshooting:"
+                    echo "1. Verify Service ID matches exactly from Render dashboard"
+                    echo "2. Ensure API key has 'Deploy' permissions"
+                    echo "3. Check service exists in your Render account"
                     exit 1
                   fi
               env:
