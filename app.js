@@ -3,6 +3,14 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+app.get('/debug-dist', (req, res) => {
+    const fs = require('fs');
+    fs.readdir(DIST_PATH, (err, files) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(files);
+    });
+});
+
 // Use absolute path to dist directory
 const DIST_PATH = path.join(__dirname, 'dist');
 const INDEX_PATH = path.join(DIST_PATH, 'index.html');
