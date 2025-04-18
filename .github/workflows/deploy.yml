@@ -5,9 +5,10 @@ on:
         branches: [main]
     pull_request:
         branches: [main]
+        types: [opened, synchronize]
 
 jobs:
-    test:
+    simple_deployment_pipeline:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
@@ -44,8 +45,7 @@ jobs:
 
     deploy:
         if: ${{ github.event_name == 'push' }}
-
-        needs: test
+        needs: simple_deployment_pipeline
         runs-on: ubuntu-latest
         steps:
             - name: Install jq
@@ -97,3 +97,14 @@ jobs:
               env:
                   RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
                   RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+
+    tag_release:
+        if: ${{ github.event_name == 'push' }}
+        needs: [simple_deployment_pipeline, deploy]
+        runs-on: ubuntu-latest
+        steps:
+            - name: Bump version and push tag
+              uses: anothrNick/github-tag-action@1.64.0
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  DEFAULT_BUMP: patch
