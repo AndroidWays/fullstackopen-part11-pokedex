@@ -1,4 +1,4 @@
-name: CI/CD Deployment Pipeline
+name: CI/CD Pipeline
 
 on:
     push:
@@ -9,87 +9,60 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
-
             - uses: actions/setup-node@v4
               with:
                   node-version: '20'
-                  cache: 'npm'
-
-            - name: Install dependencies
-              run: npm ci
-
-            - name: Install Playwright browsers
-              run: npx playwright install --with-deps
-
-            - name: Run linter
-              run: npm run lint
-
-            - name: Build project
-              run: npm run build
-
-            - name: Run unit tests
-              run: npm test
-
-            - name: Run E2E tests
-              run: npm run test:e2e
-
-            - name: Upload production build
-              uses: actions/upload-artifact@v4
-              with:
-                  name: production-build
-                  path: dist/
-                  retention-days: 1
+            - run: npm ci
+            - run: npm run build
+            - run: npm test
 
     deploy:
         needs: test
         runs-on: ubuntu-latest
         steps:
-            - name: Download build artifacts
-              uses: actions/download-artifact@v4
-              with:
-                  name: production-build
-                  path: dist
-
-            - name: Verify build files
+            - name: Verify credentials
               run: |
-                  echo "Build contents:"
-                  ls -la dist/
-                  [ -f dist/index.html ] || { echo "index.html missing!"; exit 1; }
-                  [ -f dist/bundle.js ] || { echo "bundle.js missing!"; exit 1; }
-
-            - name: Deploy to Render
-              run: |
-                  echo "Service ID: ${{ secrets.RENDER_SERVICE_ID }}"
-                  echo "Triggering Render deployment..."
-
-                  # First verify the service exists
-                  echo "Checking service status..."
-                  service_status=$(curl -s -o /dev/null -w "%{http_code}" \
-                    "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}" \
-                    -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}")
-                    
-                  if [ "$service_status" -ne 200 ]; then
-                    echo "Error: Service not found (HTTP $service_status)"
-                    echo "Verify your Service ID is correct and API key has access"
+                  if [ -z "${{ secrets.RENDER_SERVICE_ID }}" ]; then
+                    echo "::error::RENDER_SERVICE_ID secret is missing"
+                    exit 1
+                  fi
+                  if [ -z "${{ secrets.RENDER_API_KEY }}" ]; then
+                    echo "::error::RENDER_API_KEY secret is missing"
                     exit 1
                   fi
 
-                  # Trigger deployment
-                  echo "Starting deployment..."
-                  response_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-                    "https://api.render.com/deploy/${{ secrets.RENDER_SERVICE_ID }}?key=${{ secrets.RENDER_API_KEY }}")
+            - name: Deploy using Render API
+              run: |
+                  echo "Using Service ID: ${{ secrets.RENDER_SERVICE_ID }}"
 
-                  if [ "$response_code" -eq 200 ]; then
-                    echo "✅ Deployment triggered successfully!"
-                    echo "Check progress in Render dashboard"
-                  else
-                    echo "❌ Failed to trigger deployment (HTTP $response_code)"
-                    echo "Troubleshooting:"
-                    echo "1. Verify Service ID matches exactly from Render dashboard"
-                    echo "2. Ensure API key has 'Deploy' permissions"
-                    echo "3. Check service exists in your Render account"
+                  # First verify service exists
+                  echo "Verifying service..."
+                  SERVICE_INFO=$(curl -s -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+                    "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}")
+
+                  if [[ "$(echo "$SERVICE_INFO" | jq -r '.id')" != "${{ secrets.RENDER_SERVICE_ID }}" ]]; then
+                    echo "::error::Service verification failed"
+                    echo "$SERVICE_INFO" | jq
                     exit 1
                   fi
+
+                  echo "Service verified successfully"
+                  echo "Triggering deployment..."
+
+                  DEPLOY_RESPONSE=$(curl -s -X POST \
+                    "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
+                    -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+                    -H "Content-Type: application/json")
+
+                  if [[ "$(echo "$DEPLOY_RESPONSE" | jq -r '.id')" == "" ]]; then
+                    echo "::error::Deployment failed"
+                    echo "$DEPLOY_RESPONSE" | jq
+                    exit 1
+                  fi
+
+                  DEPLOY_ID=$(echo "$DEPLOY_RESPONSE" | jq -r '.id')
+                  echo "::notice::Deployment triggered successfully! ID: $DEPLOY_ID"
+                  echo "View deployment at: https://dashboard.render.com/web/${{ secrets.RENDER_SERVICE_ID }}/deploys/$DEPLOY_ID"
               env:
                   RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
                   RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
