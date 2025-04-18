@@ -3,6 +3,8 @@ name: CI/CD Deployment Pipeline
 on:
     push:
         branches: [main]
+    pull_request:
+        branches: [main]
 
 jobs:
     test:
@@ -34,12 +36,14 @@ jobs:
               run: npm run test:e2e
 
             - name: Upload production build
+              if: github.event_name == 'push'
               uses: actions/upload-artifact@v4
               with:
                   name: production-build
                   path: dist/
 
     deploy:
+        if: github.event_name == 'push'
         needs: test
         runs-on: ubuntu-latest
         steps:
@@ -63,7 +67,6 @@ jobs:
               run: |
                   echo "Starting Render deployment for service: ${{ secrets.RENDER_SERVICE_ID }}"
 
-                  # First verify service exists
                   echo "Verifying service..."
                   SERVICE_INFO=$(curl -s -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
                     "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}")
