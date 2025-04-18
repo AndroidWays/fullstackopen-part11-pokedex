@@ -18,6 +18,7 @@ jobs:
 
     deploy:
         needs: test
+
         runs-on: ubuntu-latest
         steps:
             - name: Install jq
