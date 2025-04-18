@@ -34,17 +34,18 @@ jobs:
               run: npm run test:e2e
 
             - name: Upload production build
-
               uses: actions/upload-artifact@v4
               with:
                   name: production-build
                   path: dist/
-                  retention-days: 1
 
     deploy:
         needs: test
         runs-on: ubuntu-latest
         steps:
+            - name: Install jq
+              run: sudo apt-get install -y jq
+
             - name: Download build artifacts
               uses: actions/download-artifact@v4
               with:
@@ -55,27 +56,40 @@ jobs:
               run: |
                   echo "Build contents:"
                   ls -la dist/
-                  [ -f dist/index.html ] || { echo "index.html missing!"; exit 1; }
-                  [ -f dist/bundle.js ] || { echo "bundle.js missing!"; exit 1; }
+                  [ -f dist/index.html ] || { echo "::error::index.html missing!"; exit 1; }
+                  [ -f dist/bundle.js ] || { echo "::error::bundle.js missing!"; exit 1; }
 
             - name: Deploy to Render
               run: |
-                  echo "Service ID: srv-${{ secrets.RENDER_SERVICE_ID }}"
-                  echo "Triggering Render deployment..."
+                  echo "Starting Render deployment for service: ${{ secrets.RENDER_SERVICE_ID }}"
 
-                  response_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-                    "https://api.render.com/deploy/srv-${{ secrets.RENDER_SERVICE_ID }}?key=${{ secrets.RENDER_API_KEY }}")
+                  # First verify service exists
+                  echo "Verifying service..."
+                  SERVICE_INFO=$(curl -s -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+                    "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}")
 
-                  if [ "$response_code" -eq 200 ]; then
-                    echo "Deployment triggered successfully!"
-                  else
-                    echo "Failed to trigger deployment. HTTP status: $response_code"
-                    echo "Possible issues:"
-                    echo "1. Invalid Service ID or API Key"
-                    echo "2. API Key doesn't have deploy permissions"
-                    echo "3. Service doesn't exist in your Render account"
+                  SERVICE_ID=$(echo "$SERVICE_INFO" | jq -r '.id')
+                  if [ "$SERVICE_ID" != "${{ secrets.RENDER_SERVICE_ID }}" ]; then
+                    echo "::error::Service verification failed"
+                    echo "$SERVICE_INFO" | jq
                     exit 1
                   fi
+
+                  echo "Service verified successfully. Triggering deployment..."
+                  DEPLOY_RESPONSE=$(curl -s -X POST \
+                    "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
+                    -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+                    -H "Content-Type: application/json")
+
+                  DEPLOY_ID=$(echo "$DEPLOY_RESPONSE" | jq -r '.id')
+                  if [ -z "$DEPLOY_ID" ]; then
+                    echo "::error::Deployment failed"
+                    echo "$DEPLOY_RESPONSE" | jq
+                    exit 1
+                  fi
+
+                  echo "::notice::✅ Deployment triggered successfully! ID: $DEPLOY_ID"
+                  echo "View deployment at: https://dashboard.render.com/web/${{ secrets.RENDER_SERVICE_ID }}/deploys/$DEPLOY_ID"
               env:
                   RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
                   RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
