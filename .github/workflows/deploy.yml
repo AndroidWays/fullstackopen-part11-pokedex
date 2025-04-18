@@ -1,15 +1,16 @@
-name: CI/CD Deployment Pipeline
+name: Deployment pipeline
 
 on:
     push:
-        branches: [main]
+        branches:
+            - main
     pull_request:
         branches: [main]
         types: [opened, synchronize]
 
 jobs:
     simple_deployment_pipeline:
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-20.04
         steps:
             - uses: actions/checkout@v4
 
@@ -44,9 +45,9 @@ jobs:
                   path: dist/
 
     deploy:
-        if: ${{ github.event_name == 'push' }}
-        needs: simple_deployment_pipeline
-        runs-on: ubuntu-latest
+        needs: [simple_deployment_pipeline]
+        runs-on: ubuntu-20.04
+        if: github.event_name == 'push'
         steps:
             - name: Install jq
               run: sudo apt-get install -y jq
@@ -67,7 +68,6 @@ jobs:
             - name: Deploy to Render
               run: |
                   echo "Starting Render deployment for service: ${{ secrets.RENDER_SERVICE_ID }}"
-
                   echo "Verifying service..."
                   SERVICE_INFO=$(curl -s -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
                     "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}")
@@ -99,10 +99,13 @@ jobs:
                   RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
 
     tag_release:
-        if: ${{ github.event_name == 'push' }}
-        needs: [simple_deployment_pipeline, deploy]
-        runs-on: ubuntu-latest
+        needs: [simple_deployment_pipeline]
+        runs-on: ubuntu-20.04
+        if: github.event_name == 'push'
         steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
             - name: Bump version and push tag
               uses: anothrNick/github-tag-action@1.64.0
               env:
