@@ -3,9 +3,11 @@ name: CI/CD Deployment Pipeline
 on:
     push:
         branches: [main]
-
     pull_request:
         branches: [main]
+
+env:
+    SKIP_DEPLOY: ${{ contains(join(github.event.commits.*.message, ' '), '#skip') }}
 
 jobs:
     test:
@@ -37,15 +39,14 @@ jobs:
               run: npm run test:e2e
 
             - name: Upload production build
-              if: github.event_name == 'push'
+              if: github.event_name == 'push' && !contains(join(github.event.commits.*.message, ' '), '#skip')
               uses: actions/upload-artifact@v4
               with:
                   name: production-build
                   path: dist/
 
     deploy:
-        if: ${{ github.event_name == 'push' }}
-
+        if: github.event_name == 'push' && !contains(join(github.event.commits.*.message, ' '), '#skip')
         needs: test
         runs-on: ubuntu-latest
         steps:
@@ -98,3 +99,15 @@ jobs:
               env:
                   RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
                   RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+
+    tag_release:
+        if: github.event_name == 'push' && !contains(join(github.event.commits.*.message, ' '), '#skip')
+        needs: [test, deploy]
+        runs-on: ubuntu-latest
+        steps:
+            - name: Bump version and push tag
+              uses: anothrNick/github-tag-action@1.64.0
+              with:
+                  default_bump: patch
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
