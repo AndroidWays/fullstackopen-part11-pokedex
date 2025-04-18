@@ -1,41 +1,34 @@
-name: CI/CD Deployment Pipeline
+name: Deployment pipeline
 
 on:
     push:
-        branches: [main]
-
+        branches:
+            - main
     pull_request:
         branches: [main]
+        types: [opened, synchronize]
 
 jobs:
-    test:
-        runs-on: ubuntu-latest
+    simple_deployment_pipeline:
+        runs-on: ubuntu-20.04
         steps:
             - uses: actions/checkout@v4
-
             - uses: actions/setup-node@v4
               with:
                   node-version: '20'
                   cache: 'npm'
-
             - name: Install dependencies
               run: npm ci
-
             - name: Install Playwright browsers
               run: npx playwright install --with-deps
-
             - name: Run linter
               run: npm run lint
-
             - name: Build project
               run: npm run build
-
             - name: Run unit tests
               run: npm test
-
             - name: Run E2E tests
               run: npm run test:e2e
-
             - name: Upload production build
               if: github.event_name == 'push'
               uses: actions/upload-artifact@v4
@@ -43,58 +36,13 @@ jobs:
                   name: production-build
                   path: dist/
 
-    deploy:
-        if: ${{ github.event_name == 'push' }}
-
-        needs: test
-        runs-on: ubuntu-latest
+    tag_release:
+        needs: [simple_deployment_pipeline]
+        runs-on: ubuntu-20.04
+        if: ${{ github.event_name == 'push' && !contains(github.event.head_commit.message, '#skip') }} # Skip if #skip is found in the commit message
         steps:
-            - name: Install jq
-              run: sudo apt-get install -y jq
-
-            - name: Download build artifacts
-              uses: actions/download-artifact@v4
-              with:
-                  name: production-build
-                  path: dist
-
-            - name: Verify build files
-              run: |
-                  echo "Build contents:"
-                  ls -la dist/
-                  [ -f dist/index.html ] || { echo "::error::index.html missing!"; exit 1; }
-                  [ -f dist/bundle.js ] || { echo "::error::bundle.js missing!"; exit 1; }
-
-            - name: Deploy to Render
-              run: |
-                  echo "Starting Render deployment for service: ${{ secrets.RENDER_SERVICE_ID }}"
-
-                  echo "Verifying service..."
-                  SERVICE_INFO=$(curl -s -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
-                    "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}")
-
-                  SERVICE_ID=$(echo "$SERVICE_INFO" | jq -r '.id')
-                  if [ "$SERVICE_ID" != "${{ secrets.RENDER_SERVICE_ID }}" ]; then
-                    echo "::error::Service verification failed"
-                    echo "$SERVICE_INFO" | jq
-                    exit 1
-                  fi
-
-                  echo "Service verified successfully. Triggering deployment..."
-                  DEPLOY_RESPONSE=$(curl -s -X POST \
-                    "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
-                    -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
-                    -H "Content-Type: application/json")
-
-                  DEPLOY_ID=$(echo "$DEPLOY_RESPONSE" | jq -r '.id')
-                  if [ -z "$DEPLOY_ID" ]; then
-                    echo "::error::Deployment failed"
-                    echo "$DEPLOY_RESPONSE" | jq
-                    exit 1
-                  fi
-
-                  echo "::notice::✅ Deployment triggered successfully! ID: $DEPLOY_ID"
-                  echo "View deployment at: https://dashboard.render.com/web/${{ secrets.RENDER_SERVICE_ID }}/deploys/$DEPLOY_ID"
+            - name: Bump version and push tag
+              uses: anothrNick/github-tag-action@1.64.0
               env:
-                  RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-                  RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  DEFAULT_BUMP: patch # Default to a patch bump
