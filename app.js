@@ -36,6 +36,3 @@ app.listen(PORT, () => {
     const debug = require('debug')('app');
     debug(`Server running on port ${PORT}`);
 });
-
-// RENDER_SERVICE_ID = srv - d00nfpqdbo4c73dgvg70;
-// RENDER_API_KEY = rnd_a1ltPKHrGQbbOWvYi3UkdHjZLPFc
