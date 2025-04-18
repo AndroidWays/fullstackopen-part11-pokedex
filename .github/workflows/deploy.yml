@@ -22,7 +22,6 @@ jobs:
               run: npx playwright install --with-deps
 
             - name: Run linter
-
               run: npm run lint
 
             - name: Build project
@@ -39,14 +38,12 @@ jobs:
               with:
                   name: production-build
                   path: dist/
+                  retention-days: 1
 
     deploy:
         needs: test
         runs-on: ubuntu-latest
         steps:
-            - name: Install jq
-              run: sudo apt-get install -y jq
-
             - name: Download build artifacts
               uses: actions/download-artifact@v4
               with:
@@ -62,16 +59,20 @@ jobs:
 
             - name: Deploy to Render
               run: |
-                  echo "Starting Render deployment..."
-                  response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-                    "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
-                    -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
-                    -H "Content-Type: application/json")
+                  echo "Service ID: srv-${{ secrets.RENDER_SERVICE_ID }}"
+                  echo "Triggering Render deployment..."
 
-                  if [ "$response" -eq 201 ]; then
-                    echo "✅ Deployment triggered successfully!"
+                  response_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+                    "https://api.render.com/deploy/srv-${{ secrets.RENDER_SERVICE_ID }}?key=${{ secrets.RENDER_API_KEY }}")
+
+                  if [ "$response_code" -eq 200 ]; then
+                    echo "Deployment triggered successfully!"
                   else
-                    echo "❌ Deployment failed (HTTP $response)"
+                    echo "Failed to trigger deployment. HTTP status: $response_code"
+                    echo "Possible issues:"
+                    echo "1. Invalid Service ID or API Key"
+                    echo "2. API Key doesn't have deploy permissions"
+                    echo "3. Service doesn't exist in your Render account"
                     exit 1
                   fi
               env:
