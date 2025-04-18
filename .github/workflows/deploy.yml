@@ -10,30 +10,16 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
-
             - uses: actions/setup-node@v4
               with:
                   node-version: '20'
                   cache: 'npm'
-
-            - name: Install dependencies
-              run: npm ci
-
-            - name: Install Playwright browsers
-              run: npx playwright install --with-deps
-
-            - name: Run linter
-              run: npm run lint
-
-            - name: Build project
-              run: npm run build
-
-            - name: Run unit tests
-              run: npm test
-
-            - name: Run E2E tests
-              run: npm run test:e2e
-
+            - run: npm ci
+            - run: npx playwright install --with-deps
+            - run: npm run lint
+            - run: npm run build
+            - run: npm test
+            - run: npm run test:e2e
             - name: Upload production build
               if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
               uses: actions/upload-artifact@v4
@@ -48,50 +34,24 @@ jobs:
         permissions:
             contents: write
         steps:
-            - name: Install jq
-              run: sudo apt-get install -y jq
-
-            - name: Download build artifacts
-              uses: actions/download-artifact@v4
+            - run: sudo apt-get install -y jq
+            - uses: actions/download-artifact@v4
               with:
                   name: production-build
                   path: dist
-
-            - name: Verify build files
-              run: |
-                  echo "Build contents:"
-                  ls -la dist/
+            - run: |
                   [ -f dist/index.html ] || { echo "::error::index.html missing!"; exit 1; }
                   [ -f dist/bundle.js ] || { echo "::error::bundle.js missing!"; exit 1; }
-
             - name: Deploy to Render
               run: |
-                  echo "Starting Render deployment for service: ${{ secrets.RENDER_SERVICE_ID }}"
-
-                  SERVICE_INFO=$(curl -s -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
-                    "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}")
-
-                  SERVICE_ID=$(echo "$SERVICE_INFO" | jq -r '.id')
-                  if [ "$SERVICE_ID" != "${{ secrets.RENDER_SERVICE_ID }}" ]; then
-                    echo "::error::Service verification failed"
-                    echo "$SERVICE_INFO" | jq
-                    exit 1
-                  fi
-
                   DEPLOY_RESPONSE=$(curl -s -X POST \
                     "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
                     -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
                     -H "Content-Type: application/json")
 
                   DEPLOY_ID=$(echo "$DEPLOY_RESPONSE" | jq -r '.id')
-                  if [ -z "$DEPLOY_ID" ]; then
-                    echo "::error::Deployment failed"
-                    echo "$DEPLOY_RESPONSE" | jq
-                    exit 1
-                  fi
-
-                  echo "::notice::✅ Deployment triggered successfully! ID: $DEPLOY_ID"
-                  echo "View deployment at: https://dashboard.render.com/web/${{ secrets.RENDER_SERVICE_ID }}/deploys/$DEPLOY_ID"
+                  [ -n "$DEPLOY_ID" ] || { echo "::error::Deployment failed"; exit 1; }
+                  echo "::notice::✅ Deployment triggered! ID: $DEPLOY_ID"
               env:
                   RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
                   RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
@@ -107,9 +67,7 @@ jobs:
               with:
                   ref: ${{ github.event.pull_request.merge_commit_sha }}
                   fetch-depth: '0'
-
-            - name: Bump version and push tag
-              uses: anothrNick/github-tag-action@v1
+            - uses: anothrNick/github-tag-action@8c8163ef62cf9c4677c8e800f36270af27930f42
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   DEFAULT_BUMP: patch
