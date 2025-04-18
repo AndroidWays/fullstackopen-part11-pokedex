@@ -20,49 +20,27 @@ jobs:
         needs: test
         runs-on: ubuntu-latest
         steps:
-            - name: Verify credentials
+            - name: Install jq
+              run: sudo apt-get install -y jq
+
+            - name: Deploy to Render
               run: |
-                  if [ -z "${{ secrets.RENDER_SERVICE_ID }}" ]; then
-                    echo "::error::RENDER_SERVICE_ID secret is missing"
-                    exit 1
-                  fi
-                  if [ -z "${{ secrets.RENDER_API_KEY }}" ]; then
-                    echo "::error::RENDER_API_KEY secret is missing"
-                    exit 1
-                  fi
-
-            - name: Deploy using Render API
-              run: |
-                  echo "Using Service ID: ${{ secrets.RENDER_SERVICE_ID }}"
-
-                  # First verify service exists
-                  echo "Verifying service..."
-                  SERVICE_INFO=$(curl -s -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
-                    "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}")
-
-                  if [[ "$(echo "$SERVICE_INFO" | jq -r '.id')" != "${{ secrets.RENDER_SERVICE_ID }}" ]]; then
-                    echo "::error::Service verification failed"
-                    echo "$SERVICE_INFO" | jq
-                    exit 1
-                  fi
-
-                  echo "Service verified successfully"
-                  echo "Triggering deployment..."
-
-                  DEPLOY_RESPONSE=$(curl -s -X POST \
+                  echo "Starting Render deployment..."
+                  response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
                     "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
                     -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
                     -H "Content-Type: application/json")
 
-                  if [[ "$(echo "$DEPLOY_RESPONSE" | jq -r '.id')" == "" ]]; then
-                    echo "::error::Deployment failed"
-                    echo "$DEPLOY_RESPONSE" | jq
+                  if [ "$response" -eq 201 ]; then
+                    echo "✅ Deployment triggered successfully!"
+                    echo "Check progress in Render dashboard"
+                  else
+                    echo "❌ Deployment failed (HTTP $response)"
+                    echo "Verify:"
+                    echo "1. Service ID is correct"
+                    echo "2. API Key has deploy permissions"
                     exit 1
                   fi
-
-                  DEPLOY_ID=$(echo "$DEPLOY_RESPONSE" | jq -r '.id')
-                  echo "::notice::Deployment triggered successfully! ID: $DEPLOY_ID"
-                  echo "View deployment at: https://dashboard.render.com/web/${{ secrets.RENDER_SERVICE_ID }}/deploys/$DEPLOY_ID"
               env:
                   RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
                   RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
