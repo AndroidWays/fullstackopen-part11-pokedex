@@ -1,4 +1,4 @@
-name: CI/CD Pipeline
+name: CI/CD Deployment Pipeline
 
 on:
     push:
@@ -9,20 +9,55 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
+
             - uses: actions/setup-node@v4
               with:
                   node-version: '20'
-            - run: npm ci
-            - run: npm run build
-            - run: npm test
+                  cache: 'npm'
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Install Playwright browsers
+              run: npx playwright install --with-deps
+
+            - name: Run linter
+              run: npm run lint
+
+            - name: Build project
+              run: npm run build
+
+            - name: Run unit tests
+              run: npm test
+
+            - name: Run E2E tests
+              run: npm run test:e2e
+
+            - name: Upload production build
+              uses: actions/upload-artifact@v4
+              with:
+                  name: production-build
+                  path: dist/
 
     deploy:
         needs: test
-
         runs-on: ubuntu-latest
         steps:
             - name: Install jq
               run: sudo apt-get install -y jq
+
+            - name: Download build artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  name: production-build
+                  path: dist
+
+            - name: Verify build files
+              run: |
+                  echo "Build contents:"
+                  ls -la dist/
+                  [ -f dist/index.html ] || { echo "index.html missing!"; exit 1; }
+                  [ -f dist/bundle.js ] || { echo "bundle.js missing!"; exit 1; }
 
             - name: Deploy to Render
               run: |
@@ -34,12 +69,8 @@ jobs:
 
                   if [ "$response" -eq 201 ]; then
                     echo "✅ Deployment triggered successfully!"
-                    echo "Check progress in Render dashboard"
                   else
                     echo "❌ Deployment failed (HTTP $response)"
-                    echo "Verify:"
-                    echo "1. Service ID is correct"
-                    echo "2. API Key has deploy permissions"
                     exit 1
                   fi
               env:
