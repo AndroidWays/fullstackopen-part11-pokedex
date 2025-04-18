@@ -1,13 +1,9 @@
 name: CI/CD Deployment Pipeline
 
 on:
-    push:
-        branches: [main]
     pull_request:
+        types: [closed]
         branches: [main]
-
-env:
-    SKIP_DEPLOY: ${{ contains(join(github.event.commits.*.message, ' '), '#skip') }}
 
 jobs:
     test:
@@ -39,16 +35,18 @@ jobs:
               run: npm run test:e2e
 
             - name: Upload production build
-              if: github.event_name == 'push' && !contains(join(github.event.commits.*.message, ' '), '#skip')
+              if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
               uses: actions/upload-artifact@v4
               with:
                   name: production-build
                   path: dist/
 
     deploy:
-        if: github.event_name == 'push' && !contains(join(github.event.commits.*.message, ' '), '#skip')
+        if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
         needs: test
         runs-on: ubuntu-latest
+        permissions:
+            contents: write
         steps:
             - name: Install jq
               run: sudo apt-get install -y jq
@@ -70,7 +68,6 @@ jobs:
               run: |
                   echo "Starting Render deployment for service: ${{ secrets.RENDER_SERVICE_ID }}"
 
-                  echo "Verifying service..."
                   SERVICE_INFO=$(curl -s -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
                     "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}")
 
@@ -81,7 +78,6 @@ jobs:
                     exit 1
                   fi
 
-                  echo "Service verified successfully. Triggering deployment..."
                   DEPLOY_RESPONSE=$(curl -s -X POST \
                     "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
                     -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
@@ -101,13 +97,20 @@ jobs:
                   RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
 
     tag_release:
-        if: github.event_name == 'push' && !contains(join(github.event.commits.*.message, ' '), '#skip')
+        if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
         needs: [test, deploy]
         runs-on: ubuntu-latest
+        permissions:
+            contents: write
         steps:
-            - name: Bump version and push tag
-              uses: anothrNick/github-tag-action@1.64.0
+            - uses: actions/checkout@v4
               with:
-                  default_bump: patch
+                  ref: ${{ github.event.pull_request.merge_commit_sha }}
+                  fetch-depth: '0'
+
+            - name: Bump version and push tag
+              uses: anothrNick/github-tag-action@v1
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  DEFAULT_BUMP: patch
+                  WITH_V: false
