@@ -2,7 +2,7 @@ name: CI/CD Deployment Pipeline
 
 on:
     pull_request:
-        types: [closed]
+        types: [opened, synchronize, reopened, closed]
         branches: [main]
 
 jobs:
@@ -14,13 +14,12 @@ jobs:
               with:
                   node-version: '20'
                   cache: 'npm'
-            - run: |
-                  npm ci
-                  npx playwright install --with-deps
-                  npm run lint
-                  npm run build
-                  npm test
-                  npm run test:e2e
+            - run: npm ci
+            - run: npx playwright install --with-deps
+            - run: npm run lint
+            - run: npm run build
+            - run: npm test
+            - run: npm run test:e2e
             - uses: actions/upload-artifact@v4
               if: github.event.pull_request.merged == true
               with:
@@ -61,33 +60,3 @@ jobs:
             - uses: anothrNick/github-tag-action@8c8163ef62cf9c4677c8e800f36270af27930f42
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    notifications:
-        needs: [test, deploy, tag_release]
-        runs-on: ubuntu-latest
-        if: always()
-        steps:
-            - name: Success Notification
-              if: success()
-              uses: kbrashears5/discord-webhook@v1.2.0
-              with:
-                  webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-                  title: '🚀 Deployment Successful'
-                  description: |
-                      New version deployed!
-                      **Commit:** ${{ github.sha }}
-                      **Author:** ${{ github.actor }}
-                      **Workflow:** ${{ github.workflow }}
-                  color: '00ff00'
-            - name: Failure Notification
-              if: failure()
-              uses: kbrashears5/discord-webhook@v1.2.0
-              with:
-                  webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-                  title: '❌ Build Failed'
-                  description: |
-                      **Job Result:** ${{ needs.test.result || needs.deploy.result || needs.tag_release.result }}
-                      **Commit:** ${{ github.sha }}
-                      **Author:** ${{ github.actor }}
-                      **View Logs:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-                  color: 'ff0000'
