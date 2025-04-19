@@ -2,7 +2,7 @@ name: CI/CD Deployment Pipeline
 
 on:
     pull_request:
-        types: [closed]
+        types: [opened, synchronize, reopened, closed]
         branches: [main]
 
 jobs:
@@ -60,6 +60,7 @@ jobs:
             - uses: anothrNick/github-tag-action@8c8163ef62cf9c4677c8e800f36270af27930f42
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+<<<<<<< HEAD
 
     notifications:
         needs: [test, deploy, tag_release]
@@ -90,3 +91,5 @@ jobs:
                       Workflow: ${{ github.workflow }}
                       Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
                   webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+=======
+>>>>>>> 8888ec28abaa95b43e5ddd072d93958a37c3e745
