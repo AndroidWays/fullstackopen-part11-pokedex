@@ -1,9 +1,8 @@
 name: CI/CD Deployment Pipeline
 
 on:
-    push:
-        branches: [main]
     pull_request:
+        types: [closed]
         branches: [main]
 
 jobs:
@@ -11,89 +10,83 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
-
             - uses: actions/setup-node@v4
               with:
                   node-version: '20'
                   cache: 'npm'
-
-            - name: Install dependencies
-              run: npm ci
-
-            - name: Install Playwright browsers
-              run: npx playwright install --with-deps
-
-            - name: Run linter
-              run: npm run lint
-
-            - name: Build project
-              run: npm run build
-
-            - name: Run unit tests
-              run: npm test
-
-            - name: Run E2E tests
-              run: npm run test:e2e
-
-            - name: Upload production build
-              if: github.event_name == 'push'
-              uses: actions/upload-artifact@v4
+            - run: npm ci
+            - run: npx playwright install --with-deps
+            - run: npm run lint
+            - run: npm run build
+            - run: npm test
+            - run: npm run test:e2e
+            - uses: actions/upload-artifact@v4
+              if: github.event.pull_request.merged == true
               with:
                   name: production-build
                   path: dist/
 
     deploy:
-        if: ${{ github.event_name == 'push' }}
-
+        if: github.event.pull_request.merged == true
         needs: test
         runs-on: ubuntu-latest
+        permissions:
+            contents: write
         steps:
-            - name: Install jq
-              run: sudo apt-get install -y jq
-
-            - name: Download build artifacts
-              uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@v4
               with:
                   name: production-build
                   path: dist
-
-            - name: Verify build files
-              run: |
-                  echo "Build contents:"
-                  ls -la dist/
-                  [ -f dist/index.html ] || { echo "::error::index.html missing!"; exit 1; }
-                  [ -f dist/bundle.js ] || { echo "::error::bundle.js missing!"; exit 1; }
-
-            - name: Deploy to Render
-              run: |
-                  echo "Starting Render deployment for service: ${{ secrets.RENDER_SERVICE_ID }}"
-
-                  echo "Verifying service..."
-                  SERVICE_INFO=$(curl -s -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
-                    "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}")
-
-                  SERVICE_ID=$(echo "$SERVICE_INFO" | jq -r '.id')
-                  if [ "$SERVICE_ID" != "${{ secrets.RENDER_SERVICE_ID }}" ]; then
-                    echo "::error::Service verification failed"
-                    echo "$SERVICE_INFO" | jq
-                    exit 1
-                  fi
-
-                  echo "Service verified successfully. Triggering deployment..."
-                  DEPLOY_RESPONSE=$(curl -s -X POST \
+            - run: |
+                  [ -f dist/index.html ] || exit 1
+                  [ -f dist/bundle.js ] || exit 1
+            - run: |
+                  curl -s -X POST \
                     "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
                     -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
-                    -H "Content-Type: application/json")
+                    -H "Content-Type: application/json"
 
-                  DEPLOY_ID=$(echo "$DEPLOY_RESPONSE" | jq -r '.id')
-                  if [ -z "$DEPLOY_ID" ]; then
-                    echo "::error::Deployment failed"
-                    echo "$DEPLOY_RESPONSE" | jq
-                    exit 1
-                  fi
-
-                  echo "::notice::✅ Deployment triggered successfully! ID: $DEPLOY_ID"
-                  echo "View deployment at: https://dashboard.render.com/web/${{ secrets.RENDER_SERVICE_ID }}/deploys/$DEPLOY_ID"
+    tag_release:
+        if: github.event.pull_request.merged == true
+        needs: deploy
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.event.pull_request.merge_commit_sha }}
+                  fetch-depth: 0
+            - uses: anothrNick/github-tag-action@8c8163ef62cf9c4677c8e800f36270af27930f42
               env:
-                  RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-                  RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    notifications:
+        needs: [test, deploy, tag_release]
+        runs-on: ubuntu-latest
+        if: always()
+        steps:
+            - name: Deployment Success
+              if: success()
+              uses: rjstone/discord-webhook-notify@v1
+              with:
+                  severity: info
+                  details: |
+                      🚀 A new version of Pokedex Deployed
+                      Commit: ${{ github.sha }}
+                      Author: ${{ github.actor }}
+                      Workflow: ${{ github.workflow }}
+                  webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+
+            - name: Deployment Failure
+              if: failure()
+              uses: rjstone/discord-webhook-notify@v1
+              with:
+                  severity: error
+                  details: |
+                      ❌ Deployment failed!
+                      Commit: ${{ github.sha }}
+                      Author: ${{ github.actor }}
+                      Workflow: ${{ github.workflow }}
+                      Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+                  webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
