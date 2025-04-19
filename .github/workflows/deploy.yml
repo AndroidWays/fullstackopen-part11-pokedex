@@ -2,7 +2,7 @@ name: CI/CD Deployment Pipeline
 
 on:
     pull_request:
-        types: [opened, synchronize, reopened, closed]
+        types: [closed]
         branches: [main]
 
 jobs:
