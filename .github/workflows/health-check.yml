@@ -31,6 +31,8 @@ jobs:
               run: |
                   # Store current timestamp
                   echo "CHECK_TIME=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_ENV
+                  # Store current timestamp
+                  echo "CHECK_TIME=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_ENV
 
                   # Health check
                   HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.APP_URL }}${{ env.HEALTH_ENDPOINT }} || echo "500")
@@ -75,6 +77,8 @@ jobs:
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
+                          username: 'Pokedex Status Bot',
+                          avatar_url: 'https://cdn-icons-png.flaticon.com/512/188/188987.png',
                           username: 'Pokedex Status Bot',
                           avatar_url: 'https://cdn-icons-png.flaticon.com/512/188/188987.png',
                           embeds: [{
