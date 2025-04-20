@@ -6,7 +6,7 @@ on:
     workflow_dispatch:
 
 env:
-    APP_URL: 'https://your-pokedex-app.onrender.com' # Replace with your actual URL
+    APP_URL: 'https://fullstackopen-part11-pokedex.onrender.com' # Replace with your actual URL
     HEALTH_ENDPOINT: '/health'
     VERSION_ENDPOINT: '/version'
 
