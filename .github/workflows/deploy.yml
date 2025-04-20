@@ -14,41 +14,59 @@ jobs:
               with:
                   node-version: '20'
                   cache: 'npm'
-            - run: npm ci
-            - run: npx playwright install --with-deps
-            - run: npm run lint
-            - run: npm run build
-            - run: npm test
-            - run: npm run test:e2e
-            - uses: actions/upload-artifact@v4
-              if: github.event.pull_request.merged == true
+
+            - name: Install and test
+              run: |
+                  npm ci
+                  npx playwright install --with-deps
+                  npm run lint
+                  npm run build
+                  npm test
+                  npm run test:e2e
+
+            - name: Upload production build
+              if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
+              uses: actions/upload-artifact@v4
               with:
                   name: production-build
                   path: dist/
 
     deploy:
-        if: github.event.pull_request.merged == true
+        if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
         needs: test
         runs-on: ubuntu-latest
         permissions:
             contents: write
         steps:
+            - run: sudo apt-get install -y jq
             - uses: actions/download-artifact@v4
               with:
                   name: production-build
                   path: dist
-            - run: |
-                  [ -f dist/index.html ] || exit 1
-                  [ -f dist/bundle.js ] || exit 1
-            - run: |
-                  curl -s -X POST \
+
+            - name: Verify build files
+              run: |
+                  [ -f dist/index.html ] || { echo "::error::index.html missing!"; exit 1; }
+                  [ -f dist/bundle.js ] || { echo "::error::bundle.js missing!"; exit 1; }
+
+            - name: Deploy to Render
+              run: |
+                  DEPLOY_RESPONSE=$(curl -s -X POST \
                     "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
                     -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
-                    -H "Content-Type: application/json"
+                    -H "Content-Type: application/json")
+
+                  DEPLOY_ID=$(echo "$DEPLOY_RESPONSE" | jq -r '.id')
+                  [ -n "$DEPLOY_ID" ] || { echo "::error::Deployment failed"; exit 1; }
+                  echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_ENV
+                  echo "::notice::✅ Deployment triggered! ID: $DEPLOY_ID"
+              env:
+                  RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+                  RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
 
     tag_release:
-        if: github.event.pull_request.merged == true
-        needs: deploy
+        if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
+        needs: [test, deploy]
         runs-on: ubuntu-latest
         permissions:
             contents: write
@@ -56,37 +74,90 @@ jobs:
             - uses: actions/checkout@v4
               with:
                   ref: ${{ github.event.pull_request.merge_commit_sha }}
-                  fetch-depth: 0
-            - uses: anothrNick/github-tag-action@8c8163ef62cf9c4677c8e800f36270af27930f42
+                  fetch-depth: '0'
+            - name: Bump version
+              id: version
+              uses: anothrNick/github-tag-action@8c8163ef62cf9c4677c8e800f36270af27930f42
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  DEFAULT_BUMP: patch
+                  WITH_V: false
 
-    notifications:
+    notify:
         needs: [test, deploy, tag_release]
         runs-on: ubuntu-latest
         if: always()
         steps:
-            - name: Deployment Success
-              if: success()
-              uses: rjstone/discord-webhook-notify@v1
-              with:
-                  severity: info
-                  details: |
-                      🚀 A new version of Pokedex Deployed
-                      Commit: ${{ github.sha }}
-                      Author: ${{ github.actor }}
-                      Workflow: ${{ github.workflow }}
-                  webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+            - name: Extract branch name
+              shell: bash
+              run: echo "BRANCH_NAME=${GITHUB_REF#refs/heads/}" >> $GITHUB_ENV
 
-            - name: Deployment Failure
-              if: failure()
-              uses: rjstone/discord-webhook-notify@v1
+            - name: Prepare notification data
+              id: prepare
+              shell: bash
+              run: |
+                  echo "SHORT_SHA=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+                  echo "COMMIT_URL=https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" >> $GITHUB_OUTPUT
+                  echo "WORKFLOW_URL=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> $GITHUB_OUTPUT
+
+            - name: Send Discord notification
+              uses: actions/github-script@v6
+              env:
+                  DEPLOY_ID: ${{ env.DEPLOY_ID }}
               with:
-                  severity: error
-                  details: |
-                      ❌ Deployment failed!
-                      Commit: ${{ github.sha }}
-                      Author: ${{ github.actor }}
-                      Workflow: ${{ github.workflow }}
-                      Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-                  webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+                  script: |
+                      const webhookUrl = '${{ secrets.DISCORD_WEBHOOK }}';
+                      const isSuccess = '${{ job.status }}' === 'success';
+
+                      const embed = {
+                        title: isSuccess ? '✅ A new version of Pokedex Deployed' : '❌ Build/Deployment Failed',
+                        color: isSuccess ? 65280 : 16711680,
+                        fields: [
+                          {
+                            name: 'Repository',
+                            value: '${{ github.repository }}',
+                            inline: true
+                          },
+                          {
+                            name: 'Branch',
+                            value: process.env.BRANCH_NAME,
+                            inline: true
+                          },
+                          {
+                            name: 'Version',
+                            value: '${{ steps.version.outputs.new_tag || 'latest' }}',
+                            inline: true
+                          },
+                          {
+                            name: 'Commit',
+                            value: `[${'${{ steps.prepare.outputs.SHORT_SHA }}'}](${'${{ steps.prepare.outputs.COMMIT_URL }}'})`,
+                            inline: false
+                          },
+                          {
+                            name: 'Workflow',
+                            value: `[${'${{ github.workflow }}'}](${'${{ steps.prepare.outputs.WORKFLOW_URL }}'})`,
+                            inline: false
+                          }
+                        ],
+                        timestamp: new Date().toISOString()
+                      };
+
+                      if (!isSuccess) {
+                        embed.fields.push({
+                          name: 'Failed Job',
+                          value: '${{ needs.test.result || needs.deploy.result || needs.tag_release.result }}',
+                          inline: false
+                        });
+                      }
+
+                      await fetch(webhookUrl, {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                          username: 'Pokedex CI/CD Bot',
+                          avatar_url: 'https://cdn-icons-png.flaticon.com/512/188/188987.png',
+                          embeds: [embed]
+                        })
+                      });
