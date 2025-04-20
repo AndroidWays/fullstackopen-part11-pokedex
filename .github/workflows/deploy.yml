@@ -158,6 +158,7 @@ jobs:
                                 { name: 'Status', value: '${{ needs.health_check.outputs.status_code }}', inline: true },
                                 { name: 'Response Time', value: '${{ needs.health_check.outputs.response_time }}s', inline: true },
                                 { name: 'Version', value: '${{ needs.health_check.outputs.version }}', inline: true }
+                                 
                               ]
                             }]
                           })
