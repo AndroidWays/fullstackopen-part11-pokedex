@@ -88,10 +88,6 @@ jobs:
         runs-on: ubuntu-latest
         if: always()
         steps:
-            - name: Extract branch name
-              shell: bash
-              run: echo "BRANCH_NAME=${GITHUB_REF#refs/heads/}" >> $GITHUB_ENV
-
             - name: Prepare notification data
               id: prepare
               shell: bash
@@ -99,64 +95,43 @@ jobs:
                   echo "SHORT_SHA=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
                   echo "COMMIT_URL=https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" >> $GITHUB_OUTPUT
                   echo "WORKFLOW_URL=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> $GITHUB_OUTPUT
+                  echo "BRANCH=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
 
             - name: Send Discord notification
               uses: actions/github-script@v6
               env:
+                  DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
                   DEPLOY_ID: ${{ env.DEPLOY_ID }}
               with:
                   script: |
-                      const webhookUrl = '${{ secrets.DISCORD_WEBHOOK }}';
-                      const isSuccess = '${{ job.status }}' === 'success';
-
                       const embed = {
-                        title: isSuccess ? '✅ A new version of Pokedex Deployed' : '❌ Build/Deployment Failed',
-                        color: isSuccess ? 65280 : 16711680,
+                        title: '${{ job.status }}' === 'success' 
+                          ? '✅ A new version of Pokedex Deployed' 
+                          : '❌ Build/Deployment Failed',
+                        color: '${{ job.status }}' === 'success' ? 65280 : 16711680,
                         fields: [
-                          {
-                            name: 'Repository',
-                            value: '${{ github.repository }}',
-                            inline: true
-                          },
-                          {
-                            name: 'Branch',
-                            value: process.env.BRANCH_NAME,
-                            inline: true
-                          },
-                          {
-                            name: 'Version',
-                            value: '${{ steps.version.outputs.new_tag || 'latest' }}',
-                            inline: true
-                          },
-                          {
-                            name: 'Commit',
-                            value: `[${'${{ steps.prepare.outputs.SHORT_SHA }}'}](${'${{ steps.prepare.outputs.COMMIT_URL }}'})`,
-                            inline: false
-                          },
-                          {
-                            name: 'Workflow',
-                            value: `[${'${{ github.workflow }}'}](${'${{ steps.prepare.outputs.WORKFLOW_URL }}'})`,
-                            inline: false
-                          }
+                          { name: 'Event', value: '${{ github.event_name }}', inline: true },
+                          { name: 'Repo', value: '${{ github.repository }}', inline: true },
+                          { name: 'Branch', value: '${{ steps.prepare.outputs.BRANCH }}', inline: true },
+                          { name: 'Version', value: '${{ steps.version.outputs.new_tag || 'latest' }}', inline: true },
+                          { name: 'Deploy ID', value: process.env.DEPLOY_ID || 'N/A', inline: true },
+                          { name: 'Commit', value: `[${{ steps.prepare.outputs.SHORT_SHA }}](${{ steps.prepare.outputs.COMMIT_URL }})`, inline: false },
+                          { name: 'Workflow', value: `[${{ github.workflow }}](${{ steps.prepare.outputs.WORKFLOW_URL }})`, inline: false }
                         ],
                         timestamp: new Date().toISOString()
                       };
 
-                      if (!isSuccess) {
-                        embed.fields.push({
-                          name: 'Failed Job',
-                          value: '${{ needs.test.result || needs.deploy.result || needs.tag_release.result }}',
-                          inline: false
-                        });
+                      if ('${{ job.status }}' !== 'success') {
+                        embed.fields.push(
+                          { name: 'Failed Job', value: '${{ needs.test.result || needs.deploy.result || needs.tag_release.result }}', inline: false }
+                        );
                       }
 
-                      await fetch(webhookUrl, {
+                      await fetch(process.env.DISCORD_WEBHOOK, {
                         method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json'
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                          username: 'Pokedex CI/CD Bot',
+                          username: 'Pokedex CI/CD',
                           avatar_url: 'https://cdn-icons-png.flaticon.com/512/188/188987.png',
                           embeds: [embed]
                         })
