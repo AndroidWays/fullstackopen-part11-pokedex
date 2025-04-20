@@ -14,102 +14,76 @@ jobs:
               with:
                   node-version: '20'
                   cache: 'npm'
-
-            - name: Install and test
-              run: |
-                  npm ci
-                  npx playwright install --with-deps
-                  npm run lint
-                  npm run build
-                  npm test
-                  npm run test:e2e
-
-            - name: Upload production build
-              if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
-              uses: actions/upload-artifact@v4
+            - run: npm ci
+            - run: npx playwright install --with-deps
+            - run: npm run lint
+            - run: npm run build
+            - run: npm test
+            - run: npm run test:e2e
+            - uses: actions/upload-artifact@v4
+              if: github.event.pull_request.merged == true
               with:
                   name: production-build
                   path: dist/
 
     deploy:
-        if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
+        if: github.event.pull_request.merged == true
         needs: test
         runs-on: ubuntu-latest
+        permissions:
+            contents: write
         steps:
-            - run: sudo apt-get install -y jq
             - uses: actions/download-artifact@v4
               with:
                   name: production-build
                   path: dist
-
-            - name: Verify build files
-              run: |
-                  [ -f dist/index.html ] || { echo "::error::index.html missing!"; exit 1; }
-                  [ -f dist/bundle.js ] || { echo "::error::bundle.js missing!"; exit 1; }
-
-            - name: Deploy to Render
-              id: deploy
-              run: |
-                  DEPLOY_RESPONSE=$(curl -s -X POST \
+            - run: |
+                  [ -f dist/index.html ] || exit 1
+                  [ -f dist/bundle.js ] || exit 1
+            - run: |
+                  curl -s -X POST \
                     "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
                     -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
-                    -H "Content-Type: application/json")
-
-                  DEPLOY_ID=$(echo "$DEPLOY_RESPONSE" | jq -r '.id')
-                  [ -n "$DEPLOY_ID" ] || { echo "::error::Deployment failed"; exit 1; }
-                  echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_OUTPUT
-              env:
-                  RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-                  RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+                    -H "Content-Type: application/json"
 
     tag_release:
-        if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
-        needs: [test, deploy]
+        if: github.event.pull_request.merged == true
+        needs: deploy
         runs-on: ubuntu-latest
-        outputs:
-            new_tag: ${{ steps.version.outputs.new_tag }}
+        permissions:
+            contents: write
         steps:
             - uses: actions/checkout@v4
               with:
                   ref: ${{ github.event.pull_request.merge_commit_sha }}
-                  fetch-depth: '0'
-            - name: Bump version
-              id: version
-              uses: anothrNick/github-tag-action@8c8163ef62cf9c4677c8e800f36270af27930f42
+                  fetch-depth: 0
+            - uses: anothrNick/github-tag-action@8c8163ef62cf9c4677c8e800f36270af27930f42
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  DEFAULT_BUMP: patch
-                  WITH_V: false
 
-    notify:
-        needs: [test, deploy, tag_release]
+    notify-success:
+        if: github.event.pull_request.merged == true
+        needs: deploy
         runs-on: ubuntu-latest
-        if: always()
         steps:
-            - name: Notify on Success
-              if: success() && github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
+            - name: Notify Discord of Success
               uses: rjstone/discord-webhook-notify@v1
               with:
                   severity: info
-                  username: Deployment Bot
+                  details: A new version of Pokedex deployed 🚀
                   webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
-                  text: |
-                      ✅ **Deployment successful**
-                      Version: ${{ needs.tag_release.outputs.new_tag || 'latest' }}
-                      PR: #${{ github.event.pull_request.number }}
-                      Commit: ${{ github.event.pull_request.head.sha }}
-                      Author: ${{ github.event.pull_request.user.login }}
 
-            - name: Notify on Failure
-              if: failure()
+    notify-failure:
+        if: failure()
+        needs: test
+        runs-on: ubuntu-latest
+        steps:
+            - name: Notify Discord of Failure
               uses: rjstone/discord-webhook-notify@v1
               with:
                   severity: error
-                  username: Deployment Bot
+                  details: |
+                      ❌ Build failed for commit ${{ github.event.pull_request.head.sha }}
+                      Author: ${{ github.event.pull_request.user.login }}
+                      Message: ${{ github.event.pull_request.title }}
                   webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
-                  text: |
-                      ❌ **Build or Deploy Failed**
-                      Commit: [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
-                      PR: #${{ github.event.pull_request.number }}
-                      By: ${{ github.event.pull_request.user.login }}
-                      Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
