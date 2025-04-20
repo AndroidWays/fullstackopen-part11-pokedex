@@ -1,4 +1,4 @@
-name: CI/CD Deployment Pipeline
+name: Pokedex CI/CD Pipeline with Health Monitoring
 
 on:
     pull_request:
@@ -77,87 +77,100 @@ jobs:
                   fetch-depth: '0'
             - name: Bump version
               id: version
-              uses: anothrNick/github-tag-action@8c8163ef62cf9c4677c8e800f36270af27930f42
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  DEFAULT_BUMP: patch
-                  WITH_V: false
+              run: |
+                  version=$(jq -r .version package.json)
+                  echo "version=$version" >> $GITHUB_OUTPUT
+            - name: Create Git tag
+              run: |
+                  git config --global user.name "GitHub Actions"
+                  git config --global user.email "actions@github.com"
+                  git tag -a v${{ steps.version.outputs.version }} -m "Release v${{ steps.version.outputs.version }}"
+                  git push origin v${{ steps.version.outputs.version }}
+
+    health_check:
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        outputs:
+            status_code: ${{ steps.health-check.outputs.status_code }}
+            response_time: ${{ steps.health-check.outputs.response_time }}
+            version: ${{ steps.version-check.outputs.version }}
+        steps:
+            - name: Check application health
+              id: health-check
+              run: |
+                  status_code=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.APP_URL }}${{ env.HEALTH_ENDPOINT }} || echo "500")
+                  response_time=$(curl -s -o /dev/null -w "%{time_total}" ${{ env.APP_URL }}${{ env.HEALTH_ENDPOINT }})
+                  echo "status_code=$status_code" >> $GITHUB_OUTPUT
+                  echo "response_time=$response_time" >> $GITHUB_OUTPUT
+                  [ "$status_code" -eq 200 ] || exit 1
+            - name: Get version info
+              id: version-check
+              run: |
+                  version=$(curl -s ${{ env.APP_URL }}${{ env.VERSION_ENDPOINT }} | jq -r '.version // "unknown"' || echo "unknown")
+                  echo "version=$version" >> $GITHUB_OUTPUT
 
     notify:
         needs: [test, deploy, tag_release]
         runs-on: ubuntu-latest
         if: always()
         steps:
-            - name: Extract branch name
-              shell: bash
-              run: echo "BRANCH_NAME=${GITHUB_REF#refs/heads/}" >> $GITHUB_ENV
-
-            - name: Prepare notification data
+            - name: Prepare data
               id: prepare
               shell: bash
               run: |
-                  echo "SHORT_SHA=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
-                  echo "COMMIT_URL=https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" >> $GITHUB_OUTPUT
-                  echo "WORKFLOW_URL=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> $GITHUB_OUTPUT
-
-            - name: Send Discord notification
+                  echo "sha=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+                  echo "repo=$GITHUB_REPOSITORY" >> $GITHUB_OUTPUT
+                  echo "run_url=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> $GITHUB_OUTPUT
+            - name: Set version fallback
+              id: notify-version
+              run: |
+                  version="${{ needs.health_check.outputs.version }}"
+                  echo "version=${version:-unknown}" >> $GITHUB_OUTPUT
+            - name: Send notification
               uses: actions/github-script@v6
               env:
-                  DEPLOY_ID: ${{ env.DEPLOY_ID }}
+                  WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
               with:
                   script: |
-                      const webhookUrl = '${{ secrets.DISCORD_WEBHOOK }}';
-                      const isSuccess = '${{ job.status }}' === 'success';
+                      const isHealthCheck = '${{ needs.health_check.result }}' !== 'skipped';
 
-                      const embed = {
-                        title: isSuccess ? '✅ A new version of Pokedex Deployed' : '❌ Build/Deployment Failed',
-                        color: isSuccess ? 65280 : 16711680,
-                        fields: [
-                          {
-                            name: 'Repository',
-                            value: '${{ github.repository }}',
-                            inline: true
-                          },
-                          {
-                            name: 'Branch',
-                            value: process.env.BRANCH_NAME,
-                            inline: true
-                          },
-                          {
-                            name: 'Version',
-                            value: '${{ steps.version.outputs.new_tag || 'latest' }}',
-                            inline: true
-                          },
-                          {
-                            name: 'Commit',
-                            value: `[${'${{ steps.prepare.outputs.SHORT_SHA }}'}](${'${{ steps.prepare.outputs.COMMIT_URL }}'})`,
-                            inline: false
-                          },
-                          {
-                            name: 'Workflow',
-                            value: `[${'${{ github.workflow }}'}](${'${{ steps.prepare.outputs.WORKFLOW_URL }}'})`,
-                            inline: false
-                          }
-                        ],
-                        timestamp: new Date().toISOString()
-                      };
-
-                      if (!isSuccess) {
-                        embed.fields.push({
-                          name: 'Failed Job',
-                          value: '${{ needs.test.result || needs.deploy.result || needs.tag_release.result }}',
-                          inline: false
+                      if (isHealthCheck) {
+                        const healthy = '${{ needs.health_check.result }}' === 'success';
+                        await fetch(process.env.WEBHOOK_URL, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            username: 'Pokedex Health',
+                            avatar_url: '${{ env.DISCORD_AVATAR }}',
+                            embeds: [{
+                              title: healthy ? '✅ Healthy' : '❌ Unhealthy',
+                              color: healthy ? 5763719 : 15548997,
+                              fields: [
+                                { name: 'Status', value: '${{ needs.health_check.outputs.status_code }}', inline: true },
+                                { name: 'Response Time', value: '${{ needs.health_check.outputs.response_time }}s', inline: true },
+                                { name: 'Version', value: '${{ steps.notify-version.outputs.version }}', inline: true }
+                              ]
+                            }]
+                          })
+                        });
+                      } else {
+                        const success = '${{ job.status }}' === 'success';
+                        await fetch(process.env.WEBHOOK_URL, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            username: 'Pokedex CI/CD',
+                            avatar_url: '${{ env.DISCORD_AVATAR }}',
+                            embeds: [{
+                              title: success ? '✅ Deployment Successful' : '❌ Deployment Failed',
+                              color: success ? 5763719 : 15548997,
+                              fields: [
+                                { name: 'Version', value: '${{ steps.notify-version.outputs.version }}', inline: true },
+                                { name: 'Commit', value: '${{ steps.prepare.outputs.sha }}', inline: true },
+                                { name: 'Details', value: '[View Workflow](${{ steps.prepare.outputs.run_url }})', inline: false }
+                              ]
+                            }]
+                          })
                         });
                       }
-
-                      await fetch(webhookUrl, {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                          username: 'Pokedex CI/CD Bot',
-                          avatar_url: 'https://cdn-icons-png.flaticon.com/512/188/188987.png',
-                          embeds: [embed]
-                        })
-                      });
