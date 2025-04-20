@@ -7,41 +7,71 @@ on:
 
 env:
     APP_URL: 'https://your-pokedex-app.onrender.com' # Replace with your actual URL
+    HEALTH_ENDPOINT: '/health'
+    VERSION_ENDPOINT: '/version'
 
 jobs:
     status-check:
         runs-on: ubuntu-latest
         steps:
-            - name: Check system status
-              id: status-check
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: '20'
+                  cache: 'npm'
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Run system checks
+              id: system-checks
               run: |
+                  # Store current timestamp
+                  echo "CHECK_TIME=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_ENV
                   # Store current timestamp
                   echo "CHECK_TIME=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_ENV
 
                   # Health check
-                  HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.APP_URL }}/health)
+                  HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.APP_URL }}${{ env.HEALTH_ENDPOINT }} || echo "500")
                   echo "health_status=$HEALTH_STATUS" >> $GITHUB_OUTPUT
 
-                  # E2E test (example - replace with your actual test command)
-                  npm run test:e2e && echo "e2e_status=success" >> $GITHUB_OUTPUT || echo "e2e_status=failed" >> $GITHUB_OUTPUT
+                  # E2E tests (with proper error handling)
+                  npm run test:e2e 2>/dev/null && echo "e2e_status=success" >> $GITHUB_OUTPUT || echo "e2e_status=failed" >> $GITHUB_OUTPUT
 
-                  # Other tests (example)
-                  npm run test && echo "other_tests_status=success" >> $GITHUB_OUTPUT || echo "other_tests_status=failed" >> $GITHUB_OUTPUT
+                  # Unit/Integration tests
+                  npm run test 2>/dev/null && echo "other_tests_status=success" >> $GITHUB_OUTPUT || echo "other_tests_status=failed" >> $GITHUB_OUTPUT
 
-                  # Deployment status (example)
-                  curl -s ${{ env.APP_URL }} | grep -q "Pokedex" && echo "deployment_status=success" >> $GITHUB_OUTPUT || echo "deployment_status=failed" >> $GITHUB_OUTPUT
+                  # Deployment status check
+                  if curl -s ${{ env.APP_URL }} | grep -q "Pokedex"; then
+                    echo "deployment_status=success" >> $GITHUB_OUTPUT
+                  else
+                    echo "deployment_status=failed" >> $GITHUB_OUTPUT
+                  fi
 
-                  # Version check (example)
-                  VERSION=$(curl -s ${{ env.APP_URL }}/version | jq -r .version)
+                  # Version check with fallback
+                  VERSION=$(curl -s ${{ env.APP_URL }}${{ env.VERSION_ENDPOINT }} | jq -r '.version // "unknown"' || echo "unknown")
                   echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-            - name: Send status report to Discord
+            - name: Send Discord notification
               uses: actions/github-script@v6
               env:
                   DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
               with:
                   script: |
-                      const statusEmoji = (status) => status === 'success' ? '✅' : '❌';
+                      const statusReport = [
+                        `🔹 Triggered by: ${'${{ github.event_name }}' === 'schedule' ? 'schedule' : 'manual'}`,
+                        `🔹 Health status: ${'${{ steps.system-checks.outputs.health_status }}' === '200' ? '✅ success' : '❌ failed (HTTP ${{ steps.system-checks.outputs.health_status }})'}`,
+                        `🔹 E2E Tests: ${'${{ steps.system-checks.outputs.e2e_status }}' === 'success' ? '✅ success' : '❌ failed'}`,
+                        `🔹 Other tests: ${'${{ steps.system-checks.outputs.other_tests_status }}' === 'success' ? '✅ success' : '❌ failed'}`,
+                        `🔹 Deployment: ${'${{ steps.system-checks.outputs.deployment_status }}' === 'success' ? '✅ success' : '❌ failed'}`,
+                        `🔹 Version: ${'${{ steps.system-checks.outputs.version }}' || 'unknown'}`
+                      ].join('\n');
+
+                      const isHealthy = '${{ steps.system-checks.outputs.health_status }}' === '200' && 
+                                      '${{ steps.system-checks.outputs.deployment_status }}' === 'success';
 
                       await fetch(process.env.DISCORD_WEBHOOK, {
                         method: 'POST',
@@ -49,19 +79,14 @@ jobs:
                         body: JSON.stringify({
                           username: 'Pokedex Status Bot',
                           avatar_url: 'https://cdn-icons-png.flaticon.com/512/188/188987.png',
+                          username: 'Pokedex Status Bot',
+                          avatar_url: 'https://cdn-icons-png.flaticon.com/512/188/188987.png',
                           embeds: [{
-                            title: '📊 Pokedex System Status',
-                            color: 5763719,  # Green
-                            description: [
-                              `🔹 Triggered by: ${'${{ github.event_name }}' === 'schedule' ? 'schedule' : 'manual'}`,
-                                  `🔹 Health status: ${statusEmoji('${{ steps.status-check.outputs.health_status }}' === '200' ? 'success' : 'failed')} ${'${{ steps.status-check.outputs.health_status }}' === '200' ? 'success' : 'failed'}`,
-                                  `🔹 E2E Tests: ${statusEmoji('${{ steps.status-check.outputs.e2e_status }}')} ${'${{ steps.status-check.outputs.e2e_status }}'}`,
-                                  `🔹 Other tests: ${statusEmoji('${{ steps.status-check.outputs.other_tests_status }}')} ${'${{ steps.status-check.outputs.other_tests_status }}'}`,
-                                  `🔹 Deployment: ${statusEmoji('${{ steps.status-check.outputs.deployment_status }}')} ${'${{ steps.status-check.outputs.deployment_status }}'}`,
-                                  `🔹 Version: ${'${{ steps.status-check.outputs.version }}' || 'N/A'}`
-                            ].join('\n'),
+                            title: isHealthy ? '🟢 Pokedex System Healthy' : '🔴 Pokedex Issues Detected',
+                            color: isHealthy ? 5763719 : 15548997,
+                            description: statusReport,
                             footer: {
-                              text: 'Checked at: ${{ env.CHECK_TIME }}'
+                              text: 'Checked at: ${{ env.CHECK_TIME }} | ${{ github.workflow }}'
                             }
                           }]
                         })
