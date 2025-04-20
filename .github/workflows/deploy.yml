@@ -6,7 +6,6 @@ on:
         branches: [main]
 
 jobs:
-    # Removed duplicate 'test' job definition
     test:
         runs-on: ubuntu-latest
         steps:
@@ -89,78 +88,64 @@ jobs:
         runs-on: ubuntu-latest
         if: always()
         steps:
-            - name: Get commit details
-              id: commit
-              run: |
-                  echo "event_name=$GITHUB_EVENT_NAME" >> $GITHUB_OUTPUT
-                  echo "repo=$GITHUB_REPOSITORY" >> $GITHUB_OUTPUT
-                  echo "ref=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
-                  echo "workflow=$GITHUB_WORKFLOW" >> $GITHUB_OUTPUT
-                  echo "actor=$GITHUB_ACTOR" >> $GITHUB_OUTPUT
-                  echo "commit_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" >> $GITHUB_OUTPUT
+            - name: Extract branch name
+              shell: bash
+              run: echo "BRANCH_NAME=${GITHUB_REF#refs/heads/}" >> $GITHUB_ENV
 
-                  # Get commit message (first line only)
-                  COMMIT_MSG=$(git log --format=%B -n 1 $GITHUB_SHA | head -n 1)
-                  echo "commit_msg=${COMMIT_MSG//$'\n'/' '}" >> $GITHUB_OUTPUT
+            - name: Prepare notification data
+              id: prepare
+              shell: bash
+              run: |
+                  echo "SHORT_SHA=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+                  echo "COMMIT_URL=https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" >> $GITHUB_OUTPUT
+                  echo "WORKFLOW_URL=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> $GITHUB_OUTPUT
 
             - name: Send Discord notification
               uses: actions/github-script@v6
               env:
                   DEPLOY_ID: ${{ env.DEPLOY_ID }}
-                  NEW_TAG: ${{ steps.version.outputs.new_tag || 'latest' }}
-                  JOB_RESULT: ${{ needs.test.result || needs.deploy.result || needs.tag_release.result }}
               with:
                   script: |
                       const webhookUrl = '${{ secrets.DISCORD_WEBHOOK }}';
-                      const status = '${{ job.status }}';
+                      const isSuccess = '${{ job.status }}' === 'success';
 
                       const embed = {
-                        title: status === 'success' ? 'A new version of Pokedex Deployed' : 'Build/Deployment Failed',
-                        color: status === 'success' ? 65280 : 16711680,
+                        title: isSuccess ? '✅ A new version of Pokedex Deployed' : '❌ Build/Deployment Failed',
+                        color: isSuccess ? 65280 : 16711680,
                         fields: [
                           {
+                            name: 'Repository',
+                            value: '${{ github.repository }}',
+                            inline: true
+                          },
+                          {
+                            name: 'Branch',
+                            value: process.env.BRANCH_NAME,
+                            inline: true
+                          },
+                          {
                             name: 'Version',
-                            value: process.env.NEW_TAG,
-                            inline: true
-                          },
-                          {
-                            name: 'Status',
-                            value: status === 'success' ? '✅ Success' : '❌ Failed',
-                            inline: true
-                          },
-                          {
-                            name: 'Deploy ID',
-                            value: process.env.DEPLOY_ID || 'N/A',
+                            value: '${{ steps.version.outputs.new_tag || 'latest' }}',
                             inline: true
                           },
                           {
                             name: 'Commit',
-                            value: '[${'${{ github.sha }}'.substring(0,7)}](${{ steps.commit.outputs.commit_url }})',
-                            inline: true
+                            value: `[${'${{ steps.prepare.outputs.SHORT_SHA }}'}](${'${{ steps.prepare.outputs.COMMIT_URL }}'})`,
+                            inline: false
                           },
                           {
-                            name: 'Message',
-                            value: '${{ steps.commit.outputs.commit_msg }}',
-                            inline: true
-                          },
-                          {
-                            name: 'By',
-                            value: '${{ steps.commit.outputs.actor }}',
-                            inline: true
+                            name: 'Workflow',
+                            value: `[${'${{ github.workflow }}'}](${'${{ steps.prepare.outputs.WORKFLOW_URL }}'})`,
+                            inline: false
                           }
                         ],
                         timestamp: new Date().toISOString()
                       };
 
-                      if (status !== 'success') {
+                      if (!isSuccess) {
                         embed.fields.push({
                           name: 'Failed Job',
-                          value: process.env.JOB_RESULT,
-                          inline: false
-                        });
-                        embed.fields.push({
-                          name: 'Logs',
-                          value: `[View Logs]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)`,
+                          value: '${{ needs.test.result || needs.deploy.result || needs.tag_release.result }}',
                           inline: false
                         });
                       }
@@ -171,7 +156,7 @@ jobs:
                           'Content-Type': 'application/json'
                         },
                         body: JSON.stringify({
-                          username: 'Pokedex CI/CD',
+                          username: 'Pokedex CI/CD Bot',
                           avatar_url: 'https://cdn-icons-png.flaticon.com/512/188/188987.png',
                           embeds: [embed]
                         })
