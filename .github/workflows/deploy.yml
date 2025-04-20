@@ -2,7 +2,7 @@ name: CI/CD Deployment Pipeline
 
 on:
     pull_request:
-        types: [closed]
+        types: [opened, synchronize, reopened, closed]
         branches: [main]
 
 env:
@@ -42,7 +42,6 @@ jobs:
         permissions:
             contents: write
         steps:
-            - run: sudo apt-get install -y jq
             - uses: actions/download-artifact@v4
               with:
                   name: production-build
