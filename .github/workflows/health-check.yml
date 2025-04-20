@@ -6,7 +6,7 @@ on:
     workflow_dispatch:
 
 env:
-    APP_URL: 'https://your-pokedex-app.onrender.com' # Replace with your actual URL
+    APP_URL: 'https://fullstackopen-part11-pokedex.onrender.com' # Replace with your actual URL
     HEALTH_ENDPOINT: '/health'
     VERSION_ENDPOINT: '/version'
 
@@ -31,16 +31,19 @@ jobs:
               run: |
                   # Store current timestamp
                   echo "CHECK_TIME=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_ENV
-                  # Store current timestamp
-                  echo "CHECK_TIME=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_ENV
 
                   # Health check
+                  HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.APP_URL }}${{ env.HEALTH_ENDPOINT }} || echo "500")
                   HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.APP_URL }}${{ env.HEALTH_ENDPOINT }} || echo "500")
                   echo "health_status=$HEALTH_STATUS" >> $GITHUB_OUTPUT
 
                   # E2E tests (with proper error handling)
                   npm run test:e2e 2>/dev/null && echo "e2e_status=success" >> $GITHUB_OUTPUT || echo "e2e_status=failed" >> $GITHUB_OUTPUT
+                  # E2E tests (with proper error handling)
+                  npm run test:e2e 2>/dev/null && echo "e2e_status=success" >> $GITHUB_OUTPUT || echo "e2e_status=failed" >> $GITHUB_OUTPUT
 
+                  # Unit/Integration tests
+                  npm run test 2>/dev/null && echo "other_tests_status=success" >> $GITHUB_OUTPUT || echo "other_tests_status=failed" >> $GITHUB_OUTPUT
                   # Unit/Integration tests
                   npm run test 2>/dev/null && echo "other_tests_status=success" >> $GITHUB_OUTPUT || echo "other_tests_status=failed" >> $GITHUB_OUTPUT
 
@@ -50,7 +53,15 @@ jobs:
                   else
                     echo "deployment_status=failed" >> $GITHUB_OUTPUT
                   fi
+                  # Deployment status check
+                  if curl -s ${{ env.APP_URL }} | grep -q "Pokedex"; then
+                    echo "deployment_status=success" >> $GITHUB_OUTPUT
+                  else
+                    echo "deployment_status=failed" >> $GITHUB_OUTPUT
+                  fi
 
+                  # Version check with fallback
+                  VERSION=$(curl -s ${{ env.APP_URL }}${{ env.VERSION_ENDPOINT }} | jq -r '.version // "unknown"' || echo "unknown")
                   # Version check with fallback
                   VERSION=$(curl -s ${{ env.APP_URL }}${{ env.VERSION_ENDPOINT }} | jq -r '.version // "unknown"' || echo "unknown")
                   echo "version=$VERSION" >> $GITHUB_OUTPUT
@@ -72,6 +83,17 @@ jobs:
 
                       const isHealthy = '${{ steps.system-checks.outputs.health_status }}' === '200' && 
                                       '${{ steps.system-checks.outputs.deployment_status }}' === 'success';
+                      const statusReport = [
+                        `🔹 Triggered by: ${'${{ github.event_name }}' === 'schedule' ? 'schedule' : 'manual'}`,
+                        `🔹 Health status: ${'${{ steps.system-checks.outputs.health_status }}' === '200' ? '✅ success' : '❌ failed (HTTP ${{ steps.system-checks.outputs.health_status }})'}`,
+                        `🔹 E2E Tests: ${'${{ steps.system-checks.outputs.e2e_status }}' === 'success' ? '✅ success' : '❌ failed'}`,
+                        `🔹 Other tests: ${'${{ steps.system-checks.outputs.other_tests_status }}' === 'success' ? '✅ success' : '❌ failed'}`,
+                        `🔹 Deployment: ${'${{ steps.system-checks.outputs.deployment_status }}' === 'success' ? '✅ success' : '❌ failed'}`,
+                        `🔹 Version: ${'${{ steps.system-checks.outputs.version }}' || 'unknown'}`
+                      ].join('\n');
+
+                      const isHealthy = '${{ steps.system-checks.outputs.health_status }}' === '200' && 
+                                      '${{ steps.system-checks.outputs.deployment_status }}' === 'success';
 
                       await fetch(process.env.DISCORD_WEBHOOK, {
                         method: 'POST',
@@ -81,11 +103,17 @@ jobs:
                           avatar_url: 'https://cdn-icons-png.flaticon.com/512/188/188987.png',
                           username: 'Pokedex Status Bot',
                           avatar_url: 'https://cdn-icons-png.flaticon.com/512/188/188987.png',
+                          username: 'Pokedex Status Bot',
+                          avatar_url: 'https://cdn-icons-png.flaticon.com/512/188/188987.png',
                           embeds: [{
                             title: isHealthy ? '🟢 Pokedex System Healthy' : '🔴 Pokedex Issues Detected',
                             color: isHealthy ? 5763719 : 15548997,
                             description: statusReport,
+                            title: isHealthy ? '🟢 Pokedex System Healthy' : '🔴 Pokedex Issues Detected',
+                            color: isHealthy ? 5763719 : 15548997,
+                            description: statusReport,
                             footer: {
+                              text: 'Checked at: ${{ env.CHECK_TIME }} | ${{ github.workflow }}'
                               text: 'Checked at: ${{ env.CHECK_TIME }} | ${{ github.workflow }}'
                             }
                           }]
