@@ -1,93 +1,68 @@
-name: Application Health Monitor
+name: Pokedex App Health Monitor
 
 on:
     schedule:
         - cron: '0 */6 * * *' # Every 6 hours
     workflow_dispatch:
 
+env:
+    APP_URL: 'https://your-pokedex-app.onrender.com' # Replace with your actual URL
+
 jobs:
-    health-monitor:
+    status-check:
         runs-on: ubuntu-latest
         steps:
-            - name: Check application health
-              id: health-check
+            - name: Check system status
+              id: status-check
               run: |
-                  # Get health status
-                  STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" https://your-app.onrender.com/health)
-                  echo "status_code=$STATUS_CODE" >> $GITHUB_OUTPUT
+                  # Store current timestamp
+                  echo "CHECK_TIME=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_ENV
 
-                  # Get additional metrics (example)
-                  RESPONSE_TIME=$(curl -s -o /dev/null -w "%{time_total}" https://your-app.onrender.com/health)
-                  echo "response_time=$RESPONSE_TIME" >> $GITHUB_OUTPUT
+                  # Health check
+                  HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.APP_URL }}/health)
+                  echo "health_status=$HEALTH_STATUS" >> $GITHUB_OUTPUT
 
-                  if [ "$STATUS_CODE" -ne 200 ]; then
-                    echo "::error::Health check failed with status $STATUS_CODE"
-                    exit 1
-                  fi
+                  # E2E test (example - replace with your actual test command)
+                  npm run test:e2e && echo "e2e_status=success" >> $GITHUB_OUTPUT || echo "e2e_status=failed" >> $GITHUB_OUTPUT
 
-            - name: Run synthetic tests
-              if: success()
-              run: |
-                  # Example test commands - replace with your actual tests
-                  npm run test:e2e
-                  npm run test:integration
-              id: synthetic-tests
+                  # Other tests (example)
+                  npm run test && echo "other_tests_status=success" >> $GITHUB_OUTPUT || echo "other_tests_status=failed" >> $GITHUB_OUTPUT
 
-            - name: Compile status report
-              run: |
-                  echo "REPORT<<EOF" >> $GITHUB_OUTPUT
-                  echo "🔹 Triggered by: ${{ github.event_name }}" >> $GITHUB_OUTPUT
-                  echo "🔹 Health status: ✅ success (${{ steps.health-check.outputs.response_time }}s)" >> $GITHUB_OUTPUT
-                  echo "🔹 E2E Tests: ✅ success" >> $GITHUB_OUTPUT
-                  echo "🔹 Integration Tests: ✅ success" >> $GITHUB_OUTPUT
-                  echo "🔹 Deployment Status: ✅ healthy" >> $GITHUB_OUTPUT
-                  echo "🔹 Current Version: ${{ needs.get-version.outputs.version }}" >> $GITHUB_OUTPUT
-                  echo "EOF" >> $GITHUB_OUTPUT
-              id: compile-report
+                  # Deployment status (example)
+                  curl -s ${{ env.APP_URL }} | grep -q "Pokedex" && echo "deployment_status=success" >> $GITHUB_OUTPUT || echo "deployment_status=failed" >> $GITHUB_OUTPUT
 
-            - name: Send comprehensive notification
+                  # Version check (example)
+                  VERSION=$(curl -s ${{ env.APP_URL }}/version | jq -r .version)
+                  echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+            - name: Send status report to Discord
               uses: actions/github-script@v6
               env:
                   DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
               with:
                   script: |
-                      const report = `${{ steps.compile-report.outputs.REPORT }}`;
+                      const statusEmoji = (status) => status === 'success' ? '✅' : '❌';
 
                       await fetch(process.env.DISCORD_WEBHOOK, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                          username: 'System Status Bot',
-                          avatar_url: 'https://cdn-icons-png.flaticon.com/512/1828/1828884.png',
+                          username: 'Pokedex Status Bot',
+                          avatar_url: 'https://cdn-icons-png.flaticon.com/512/188/188987.png',
                           embeds: [{
-                            title: '📊 System Status Report',
-                            color: 5763719,  # Green color
-                            description: report,
-                            fields: [
-                              {
-                                name: 'Response Time',
-                                value: `${${{ steps.health-check.outputs.response_time }}s`,
-                                inline: true
-                              },
-                              {
-                                name: 'Last Checked',
-                                value: new Date().toUTCString(),
-                                inline: true
-                              }
-                            ],
-                            timestamp: new Date().toISOString()
+                            title: '📊 Pokedex System Status',
+                            color: 5763719,  # Green
+                            description: [
+                              `🔹 Triggered by: ${'${{ github.event_name }}' === 'schedule' ? 'schedule' : 'manual'}`,
+                                  `🔹 Health status: ${statusEmoji('${{ steps.status-check.outputs.health_status }}' === '200' ? 'success' : 'failed')} ${'${{ steps.status-check.outputs.health_status }}' === '200' ? 'success' : 'failed'}`,
+                                  `🔹 E2E Tests: ${statusEmoji('${{ steps.status-check.outputs.e2e_status }}')} ${'${{ steps.status-check.outputs.e2e_status }}'}`,
+                                  `🔹 Other tests: ${statusEmoji('${{ steps.status-check.outputs.other_tests_status }}')} ${'${{ steps.status-check.outputs.other_tests_status }}'}`,
+                                  `🔹 Deployment: ${statusEmoji('${{ steps.status-check.outputs.deployment_status }}')} ${'${{ steps.status-check.outputs.deployment_status }}'}`,
+                                  `🔹 Version: ${'${{ steps.status-check.outputs.version }}' || 'N/A'}`
+                            ].join('\n'),
+                            footer: {
+                              text: 'Checked at: ${{ env.CHECK_TIME }}'
+                            }
                           }]
                         })
                       });
-
-    get-version:
-        runs-on: ubuntu-latest
-        outputs:
-            version: ${{ steps.extract-version.outputs.version }}
-        steps:
-            - name: Extract current version
-              id: extract-version
-              run: |
-                  # Replace with your actual version extraction logic
-                  VERSION=$(curl -s https://your-app.onrender.com/version | jq -r .version)
-                  echo "version=$VERSION" >> $GITHUB_OUTPUT
