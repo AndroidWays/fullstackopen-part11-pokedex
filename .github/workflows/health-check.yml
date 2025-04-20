@@ -1,18 +1,18 @@
-name: Pokedex Health Check
+name: Health Check
 
 on:
     schedule:
-        - cron: '0 8 * * *' # runs daily at 8 AM UTC
-    workflow_dispatch: # allows manual trigger for testing
+        - cron: '0 0 * * *' # Runs once daily at midnight UTC
+    workflow_dispatch:
 
 jobs:
     health-check:
         runs-on: ubuntu-latest
         steps:
-            - name: Check Health Endpoint
+            - name: Check deployed URL
               uses: jtalk/url-health-check-action@v4
               with:
-                  url: https://fullstackopen-part11-pokedex.onrender.com/health
+                  url: https://fullstackopen-part11-pokedex.onrender.com/
                   follow-redirect: true
                   max-attempts: 3
-                  retry-delay: 5
+                  retry-delay: 5s
