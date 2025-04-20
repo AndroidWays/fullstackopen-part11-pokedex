@@ -1,185 +1,138 @@
-name: Pokedex CI/CD Pipeline with Health Monitoring
+name: Pokedex CI/CD Deployment Pipeline
 
 on:
     pull_request:
         types: [closed]
         branches: [main]
-    schedule:
-        - cron: '0 8 * * *'
-    workflow_dispatch:
-
-env:
-    APP_NAME: 'Pokedex'
-    APP_URL: 'https://fullstackopen-part11-pokedex.onrender.com'
-    HEALTH_ENDPOINT: '/health'
-    VERSION_ENDPOINT: '/version'
-    DISCORD_AVATAR: 'https://cdn-icons-png.flaticon.com/512/188/188987.png'
 
 jobs:
     test:
-        if: github.event_name == 'pull_request'
         runs-on: ubuntu-latest
-        timeout-minutes: 15
         steps:
             - uses: actions/checkout@v4
             - uses: actions/setup-node@v4
               with:
                   node-version: '20'
                   cache: 'npm'
-            - run: npm ci --audit=false
-            - run: npx playwright install --with-deps
-            - run: |
-                  npm run lint || exit 1
-                  npm run build || exit 1
-                  npm test || exit 1
-                  npm run test:e2e || exit 1
-            - uses: actions/upload-artifact@v4
+
+            - name: Install and test
+              run: |
+                  npm ci
+                  npx playwright install --with-deps
+                  npm run lint
+                  npm run build
+                  npm test
+                  npm run test:e2e
+
+            - name: Upload production build
               if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
+              uses: actions/upload-artifact@v4
               with:
                   name: production-build
                   path: dist/
-                  retention-days: 1
 
     deploy:
         if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
         needs: test
         runs-on: ubuntu-latest
-        timeout-minutes: 10
         permissions:
             contents: write
         steps:
-            - run: sudo apt-get install -y jq curl
+            - run: sudo apt-get install -y jq
             - uses: actions/download-artifact@v4
               with:
                   name: production-build
                   path: dist
-            - run: |
-                  [ -f dist/index.html ] || exit 1
-                  [ -f dist/main.js ] || exit 1
-            - name: Trigger Render deployment
-              id: deploy-step
+
+            - name: Verify build files
               run: |
-                  response=$(curl -s -X POST \
+                  [ -f dist/index.html ] || { echo "::error::index.html missing!"; exit 1; }
+                  [ -f dist/bundle.js ] || { echo "::error::bundle.js missing!"; exit 1; }
+
+            - name: Deploy to Render
+              run: |
+                  DEPLOY_RESPONSE=$(curl -s -X POST \
                     "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
                     -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
-                    -H "Content-Type: application/json" \
-                    -w "\n%{http_code}")
+                    -H "Content-Type: application/json")
 
-                  http_code=$(echo "$response" | tail -n1)
-                  body=$(echo "$response" | sed '$d')
-
-                  if [ "$http_code" -ne 201 ]; then
-                    echo "::error::Deployment failed with HTTP $http_code"
-                    exit 1
-                  fi
-
-                  deploy_id=$(echo "$body" | jq -r '.id')
-                  echo "DEPLOY_ID=$deploy_id" >> $GITHUB_ENV
-                  echo "deploy_id=$deploy_id" >> $GITHUB_OUTPUT
+                  DEPLOY_ID=$(echo "$DEPLOY_RESPONSE" | jq -r '.id')
+                  [ -n "$DEPLOY_ID" ] || { echo "::error::Deployment failed"; exit 1; }
+                  echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_ENV
+                  echo "::notice::✅ Deployment triggered! ID: $DEPLOY_ID"
+              env:
+                  RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+                  RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
 
     tag_release:
         if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
         needs: [test, deploy]
         runs-on: ubuntu-latest
-        timeout-minutes: 5
         permissions:
             contents: write
         steps:
             - uses: actions/checkout@v4
               with:
                   ref: ${{ github.event.pull_request.merge_commit_sha }}
-                  fetch-depth: 0
-            - name: Get version from package.json
+                  fetch-depth: '0'
+            - name: Bump version
               id: version
-              run: |
-                  version=$(jq -r .version package.json)
-                  echo "version=$version" >> $GITHUB_OUTPUT
-            - name: Create Git tag
-              run: |
-                  git config --global user.name "GitHub Actions"
-                  git config --global user.email "actions@github.com"
-                  git tag -a v${{ steps.version.outputs.version }} -m "Release v${{ steps.version.outputs.version }}"
-                  git push origin v${{ steps.version.outputs.version }}
-
-    health_check:
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        runs-on: ubuntu-latest
-        timeout-minutes: 5
-        steps:
-            - name: Check application health
-              id: health-check
-              run: |
-                  status_code=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.APP_URL }}${{ env.HEALTH_ENDPOINT }} || echo "500")
-                  response_time=$(curl -s -o /dev/null -w "%{time_total}" ${{ env.APP_URL }}${{ env.HEALTH_ENDPOINT }})
-                  echo "status_code=$status_code" >> $GITHUB_OUTPUT
-                  echo "response_time=$response_time" >> $GITHUB_OUTPUT
-                  [ "$status_code" -eq 200 ] || exit 1
-            - name: Get version info
-              id: version-check
-              run: |
-                  version=$(curl -s ${{ env.APP_URL }}${{ env.VERSION_ENDPOINT }} | jq -r '.version // "unknown"' || echo "unknown")
-                  echo "version=$version" >> $GITHUB_OUTPUT
+              uses: anothrNick/github-tag-action@8c8163ef62cf9c4677c8e800f36270af27930f42
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  DEFAULT_BUMP: patch
+                  WITH_V: false
 
     notify:
-        needs:
-            - test
-            - deploy
-            - tag_release
-            - health_check
+        needs: [test, deploy, tag_release]
         runs-on: ubuntu-latest
         if: always()
         steps:
-            - name: Prepare data
+            - name: Prepare notification data
               id: prepare
+              shell: bash
               run: |
-                  echo "sha=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
-                  echo "repo=$GITHUB_REPOSITORY" >> $GITHUB_OUTPUT
-                  echo "run_url=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> $GITHUB_OUTPUT
-            - name: Send notification
+                  echo "SHORT_SHA=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+                  echo "COMMIT_URL=https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" >> $GITHUB_OUTPUT
+                  echo "WORKFLOW_URL=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> $GITHUB_OUTPUT
+                  echo "BRANCH=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
+
+            - name: Send Discord notification
               uses: actions/github-script@v6
               env:
-                  WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
+                  DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+                  DEPLOY_ID: ${{ env.DEPLOY_ID }}
               with:
                   script: |
-                      const isHealthCheck = '${{ needs.health_check.result }}' !== 'skipped';
+                      const embed = {
+                        title: '${{ job.status }}' === 'success' 
+                          ? '✅ A new version of Pokedex Deployed' 
+                          : '❌ Build/Deployment Failed',
+                        color: '${{ job.status }}' === 'success' ? 65280 : 16711680,
+                        fields: [
+                          { name: 'Event', value: '${{ github.event_name }}', inline: true },
+                          { name: 'Repo', value: '${{ github.repository }}', inline: true },
+                          { name: 'Branch', value: '${{ steps.prepare.outputs.BRANCH }}', inline: true },
+                          { name: 'Version', value: '${{ steps.version.outputs.new_tag || 'latest' }}', inline: true },
+                          { name: 'Deploy ID', value: process.env.DEPLOY_ID || 'N/A', inline: true },
+                          { name: 'Commit', value: `[${{ steps.prepare.outputs.SHORT_SHA }}](${{ steps.prepare.outputs.COMMIT_URL }})`, inline: false },
+                          { name: 'Workflow', value: `[${{ github.workflow }}](${{ steps.prepare.outputs.WORKFLOW_URL }})`, inline: false }
+                        ],
+                        timestamp: new Date().toISOString()
+                      };
 
-                      if (isHealthCheck) {
-                        const healthy = '${{ needs.health_check.result }}' === 'success';
-                        await fetch(process.env.WEBHOOK_URL, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            username: 'Pokedex Health',
-                            avatar_url: '${{ env.DISCORD_AVATAR }}',
-                            embeds: [{
-                              title: healthy ? '✅ Healthy' : '❌ Unhealthy',
-                              color: healthy ? 5763719 : 15548997,
-                              fields: [
-                                { name: 'Status', value: '${{ needs.health_check.outputs.status_code }}', inline: true },
-                                { name: 'Response Time', value: '${{ needs.health_check.outputs.response_time }}s', inline: true },
-                                { name: 'Version', value: '${{ needs.health_check.outputs.version }}', inline: true }
-                                 
-                              ]
-                            }]
-                          })
-                        });
-                      } else {
-                        const success = '${{ job.status }}' === 'success';
-                        await fetch(process.env.WEBHOOK_URL, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            username: 'Pokedex CI/CD',
-                            avatar_url: '${{ env.DISCORD_AVATAR }}',
-                            embeds: [{
-                              title: success ? '✅ Deployment Successful' : '❌ Deployment Failed',
-                              color: success ? 5763719 : 15548997,
-                              fields: [
-                                { name: 'Version', value: '${{ steps.version.outputs.version }}', inline: true },
-                                { name: 'Commit', value: '${{ steps.prepare.outputs.sha }}', inline: true },
-                                { name: 'Details', value: '[View Workflow](${{ steps.prepare.outputs.run_url }})', inline: false }
-                              ]
-                            }]
-                          })
-                        });
+                      if ('${{ job.status }}' !== 'success') {
+                        embed.fields.push(
+                          { name: 'Failed Job', value: '${{ needs.test.result || needs.deploy.result || needs.tag_release.result }}', inline: false }
+                        );
                       }
+
+                      await fetch(process.env.DISCORD_WEBHOOK, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          username: 'Pokedex CI/CD',
+                          avatar_url: 'https://cdn-icons-png.flaticon.com/512/188/188987.png',
+                          embeds: [embed]
+                        })
+                      });
