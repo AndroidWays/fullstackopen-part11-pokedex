@@ -1,5 +1,4 @@
 name: Pokedex CI/CD Deployment Pipeline
-name: Pokedex CI/CD Deployment Pipeline
 
 on:
     pull_request:
