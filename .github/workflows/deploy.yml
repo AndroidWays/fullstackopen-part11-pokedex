@@ -5,7 +5,7 @@ on:
         types: [closed]
         branches: [main]
     schedule:
-        - cron: '0 8 * * *' # Daily at 8:00 UTC
+        - cron: '0 8 * * *'
     workflow_dispatch:
 
 env:
@@ -17,7 +17,6 @@ env:
 
 jobs:
     test:
-        if: github.event_name == 'pull_request'
         if: github.event_name == 'pull_request'
         runs-on: ubuntu-latest
         timeout-minutes: 15
@@ -34,15 +33,8 @@ jobs:
                   npm run build || exit 1
                   npm test || exit 1
                   npm run test:e2e || exit 1
-
-            - name: Debug build output
-              run: |
-                  echo "Build output contents:"
-                  ls -R dist/
-
-            - name: Upload production build
+            - uses: actions/upload-artifact@v4
               if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
-              uses: actions/upload-artifact@v4
               with:
                   name: production-build
                   path: dist/
@@ -52,53 +44,41 @@ jobs:
         if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
         needs: test
         runs-on: ubuntu-latest
-        timeout-minutes: 10
         permissions:
             contents: write
         steps:
-            - run: sudo apt-get install -y jq curl
+            - run: sudo apt-get install -y jq
             - uses: actions/download-artifact@v4
               with:
                   name: production-build
                   path: dist
             - name: Verify build files
               run: |
-                  # Check for common index file patterns
-                  if [ ! -f "dist/index.html" ] && [ ! -f "dist/index.htm" ]; then
-                    echo "::error::No index file found in dist directory"
-                    ls -R dist/
-                    exit 1
-                  fi
+                  [ -f dist/index.html ] || { echo "::error::index.html missing!"; exit 1; }
+                  [ -f dist/bundle.js ] || { echo "::error::bundle.js missing!"; exit 1; }
 
-                  # Check for common JS file patterns
-                  if [ ! -f "dist/main.js" ] && [ ! -f "dist/bundle.js" ] && [ ! -f "dist/app.js" ]; then
-                    echo "::error::No main JavaScript file found in dist directory"
-                    ls -R dist/
-                    exit 1
-                  fi
-
-            - name: Trigger Render deployment
-              id: deploy-step
+            - name: Deploy to Render
               run: |
-                  response=$(curl -s -X POST \
+                  DEPLOY_RESPONSE=$(curl -s -X POST \
                     "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
                     -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
-                    -H "Content-Type: application/json" \
-                    -w "\n%{http_code}")
+                    -H "Content-Type: application/json")
+                  DEPLOY_ID=$(echo "$DEPLOY_RESPONSE" | jq -r '.id')
+                  [ -n "$DEPLOY_ID" ] || { echo "::error::Deployment failed"; exit 1; }
+                  echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_ENV
+                  echo "::notice::✅ Deployment triggered! ID: $DEPLOY_ID"
+              env:
+                  RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+                  RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
 
-                  http_code=$(echo "$response" | tail -n1)
-                  body=$(echo "$response" | sed '$d')
-
-                  if [ "$http_code" -ne 201 ]; then
-                    echo "::error::Deployment failed with HTTP $http_code"
-                    echo "$body" | jq .
-                    exit 1
-                  fi
-
-                  deploy_id=$(echo "$body" | jq -r '.id')
-                  echo "DEPLOY_ID=$deploy_id" >> $GITHUB_ENV
-                  echo "deploy_id=$deploy_id" >> $GITHUB_OUTPUT
-                  echo "::notice::✅ Deployment triggered! ID: $deploy_id"
+            - name: Check the deployed service URL
+              uses: jtalk/url-health-check-action@v4
+              with:
+                  url: https://fullstackopen-part11-pokedex.onrender.com/
+                  follow-redirect: false
+                  max-attempts: 3
+                  retry-delay: 5s
+                  retry-all: false
 
     tag_release:
         if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
@@ -112,14 +92,11 @@ jobs:
               with:
                   ref: ${{ github.event.pull_request.merge_commit_sha }}
                   fetch-depth: 0
-
             - name: Get version from package.json
               id: version
               run: |
                   version=$(jq -r .version package.json)
-                  echo "new_tag=v$version" >> $GITHUB_OUTPUT
                   echo "version=$version" >> $GITHUB_OUTPUT
-
             - name: Create Git tag
               run: |
                   git config --global user.name "GitHub Actions"
@@ -131,9 +108,13 @@ jobs:
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         runs-on: ubuntu-latest
         timeout-minutes: 5
+        outputs:
+            status_code: ${{ steps.health.outputs.status_code }}
+            response_time: ${{ steps.health.outputs.response_time }}
+            version: ${{ steps.version.outputs.version }}
         steps:
             - name: Check application health
-              id: health-check
+              id: health
               run: |
                   status_code=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.APP_URL }}${{ env.HEALTH_ENDPOINT }} || echo "500")
                   response_time=$(curl -s -o /dev/null -w "%{time_total}" ${{ env.APP_URL }}${{ env.HEALTH_ENDPOINT }})
@@ -142,7 +123,7 @@ jobs:
                   [ "$status_code" -eq 200 ] || exit 1
 
             - name: Get version info
-              id: version-check
+              id: version
               run: |
                   version=$(curl -s ${{ env.APP_URL }}${{ env.VERSION_ENDPOINT }} | jq -r '.version // "unknown"' || echo "unknown")
                   echo "version=$version" >> $GITHUB_OUTPUT
@@ -156,15 +137,12 @@ jobs:
         runs-on: ubuntu-latest
         if: always()
         steps:
-            - name: Prepare notification data
+            - name: Prepare data
               id: prepare
               run: |
                   echo "sha=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
                   echo "repo=$GITHUB_REPOSITORY" >> $GITHUB_OUTPUT
                   echo "run_url=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> $GITHUB_OUTPUT
-                  echo "event_type=${{ github.event_name }}" >> $GITHUB_OUTPUT
-                  echo "deploy_id=${{ env.DEPLOY_ID || 'N/A' }}" >> $GITHUB_OUTPUT
-                  echo "app_version=${{ steps.version.outputs.version || needs.health_check.outputs.version || 'unknown' }}" >> $GITHUB_OUTPUT
 
             - name: Send notification
               uses: actions/github-script@v6
@@ -172,57 +150,34 @@ jobs:
                   WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
               with:
                   script: |
-                      const isHealthCheck = '${{ steps.prepare.outputs.event_type }}' === 'schedule' || 
-                                          '${{ steps.prepare.outputs.event_type }}' === 'workflow_dispatch';
+                      const healthy = '${{ needs.health_check.result }}' === 'success';
+                      const healthOutputs = {
+                        status: '${{ needs.health_check.outputs.status_code }}',
+                        time: '${{ needs.health_check.outputs.response_time }}',
+                        version: '${{ needs.health_check.outputs.version }}',
+                      };
 
-                      if (isHealthCheck) {
-                        const healthy = '${{ needs.health_check.result }}' === 'success';
-                        await fetch(process.env.WEBHOOK_URL, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            username: 'Pokedex Health Monitor',
-                            avatar_url: process.env.DISCORD_AVATAR,
-                            embeds: [{
-                              title: healthy ? '✅ Pokedex Health Check Passed' : '❌ Pokedex Health Check Failed',
-                              color: healthy ? 5763719 : 15548997,
-                              fields: [
-                                { name: 'Status', value: healthy ? 'Healthy' : 'Unhealthy', inline: true },
-                                { name: 'Response Code', value: '${{ needs.health_check.outputs.status_code }}', inline: true },
-                                { name: 'Response Time', value: `${'${{ needs.health_check.outputs.response_time }}'}s`, inline: true },
-                                { name: 'Version', value: '${{ needs.health_check.outputs.version }}', inline: true },
-                                { name: 'Trigger', value: '${{ steps.prepare.outputs.event_type }}' === 'workflow_dispatch' ? 'Manual' : 'Scheduled', inline: true },
-                                { name: 'View App', value: `[Open Pokedex](${process.env.APP_URL})`, inline: false }
-                              ],
-                              timestamp: new Date().toISOString()
-                            }]
-                          })
-                        });
-                      } else {
-                        const success = '${{ job.status }}' === 'success';
-                        await fetch(process.env.WEBHOOK_URL, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            username: 'Pokedex CI/CD',
-                            avatar_url: process.env.DISCORD_AVATAR,
-                            embeds: [{
-                              title: success ? '✅ Pokedex Deployment Successful' : '❌ Pokedex Deployment Failed',
-                              color: success ? 5763719 : 15548997,
-                              fields: [
-                                { name: 'Version', value: '${{ steps.prepare.outputs.app_version }}', inline: true },
-                                { name: 'Deploy ID', value: '${{ steps.prepare.outputs.deploy_id }}', inline: true },
-                                { name: 'Commit', value: `[${'${{ steps.prepare.outputs.sha }}'](https://github.com/${{ steps.prepare.outputs.repo }}/commit/${{ github.SHA }})`, inline: true },
-                                { name: 'Triggered By', value: '${{ github.actor }}', inline: true },
-                                { name: 'Details', value: `[View Workflow](${'${{ steps.prepare.outputs.run_url }}')`, inline: false },
-                                ...('${{ job.status }}' !== 'success' ? [{
-                                  name: 'Failed Step',
-                                  value: '${{ needs.test.result || needs.deploy.result || needs.tag_release.result }}',
-                                  inline: false
-                                }] : [])
-                              ],
-                              timestamp: new Date().toISOString()
-                            }]
-                          })
-                        });
-                      }
+                      const deploymentSuccess = '${{ job.status }}' === 'success';
+                      const runUrl = '${{ steps.prepare.outputs.run_url }}';
+                      const sha = '${{ steps.prepare.outputs.sha }}';
+
+                      const embed = {
+                        title: healthy ? '✅ Health Check Passed' : '❌ Health Check Failed',
+                        color: healthy ? 5763719 : 15548997,
+                        fields: [
+                          { name: 'Status Code', value: healthOutputs.status, inline: true },
+                          { name: 'Response Time', value: healthOutputs.time + 's', inline: true },
+                          { name: 'Version', value: healthOutputs.version, inline: true },
+                          { name: 'Details', value: `[View Run](${runUrl})`, inline: false }
+                        ]
+                      };
+
+                      await fetch(process.env.WEBHOOK_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          username: 'Pokedex CI/CD',
+                          avatar_url: '${{ env.DISCORD_AVATAR }}',
+                          embeds: [embed]
+                        })
+                      });
