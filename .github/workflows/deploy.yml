@@ -5,10 +5,13 @@ on:
         types: [closed]
         branches: [main]
     schedule:
-        - cron: '0 0 * * *'
+        - cron: '0 12 * * *' # Daily at 12:00 UTC
+        - cron: '0 0 * * *'  # Another cron schedule
+    workflow_dispatch:
 
 jobs:
     test:
+        if: github.event_name == 'pull_request'
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
@@ -16,7 +19,6 @@ jobs:
               with:
                   node-version: '20'
                   cache: 'npm'
-
             - name: Install and test
               run: |
                   npm ci
@@ -25,7 +27,6 @@ jobs:
                   npm run build
                   npm test
                   npm run test:e2e
-
             - name: Upload production build
               if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
               uses: actions/upload-artifact@v4
@@ -45,23 +46,19 @@ jobs:
               with:
                   name: production-build
                   path: dist
-
             - name: Verify build files
               run: |
                   [ -f dist/index.html ] || { echo "::error::index.html missing!"; exit 1; }
                   [ -f dist/bundle.js ] || { echo "::error::bundle.js missing!"; exit 1; }
-
             - name: Deploy to Render
               run: |
                   DEPLOY_RESPONSE=$(curl -s -X POST \
                     "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
                     -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
                     -H "Content-Type: application/json")
-
                   DEPLOY_ID=$(echo "$DEPLOY_RESPONSE" | jq -r '.id')
                   [ -n "$DEPLOY_ID" ] || { echo "::error::Deployment failed"; exit 1; }
                   echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_ENV
-                  echo "::notice::✅ Deployment triggered! ID: $DEPLOY_ID"
               env:
                   RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
                   RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
@@ -86,27 +83,13 @@ jobs:
               with:
                   ref: ${{ github.event.pull_request.merge_commit_sha }}
                   fetch-depth: '0'
-            - name: Check if tag exists
-              id: tag_check
-              run: |
-                  TAG_EXISTS=$(git tag -l "v*")
-                  if [ -n "$TAG_EXISTS" ]; then
-                      echo "Tag v already exists. Skipping tag creation."
-                      echo "tag_exists=true" >> $GITHUB_ENV
-                  else
-                      echo "Tag v does not exist. Proceeding with tag creation."
-                      echo "tag_exists=false" >> $GITHUB_ENV
-                  fi
-
             - name: Bump version
-              if: env.tag_exists == 'false'
               id: version
               uses: anothrNick/github-tag-action@8c8163ef62cf9c4677c8e800f36270af27930f42
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   DEFAULT_BUMP: patch
                   WITH_V: false
-
             - name: Create new tag if it doesn't exist
               if: env.tag_exists == 'false'
               run: |
@@ -118,16 +101,6 @@ jobs:
         runs-on: ubuntu-latest
         if: always()
         steps:
-            - name: Get workflow details
-              id: workflow
-              run: |
-                  echo "run_id=$GITHUB_RUN_ID" >> $GITHUB_OUTPUT
-                  echo "sha=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
-                  echo "repo=$GITHUB_REPOSITORY" >> $GITHUB_OUTPUT
-                  echo "server_url=$GITHUB_SERVER_URL" >> $GITHUB_OUTPUT
-                  echo "pr_number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-                  echo "actor=${{ github.event.pull_request.user.login }}" >> $GITHUB_OUTPUT
-
             - name: Send Discord notification
               uses: actions/github-script@v6
               with:
@@ -151,27 +124,19 @@ jobs:
                         timestamp: new Date().toISOString()
                       };
 
-                      if (status !== 'success') {
-                        embed.fields.push({
-                          name: 'Logs',
-                          value: `${'${{ steps.workflow.outputs.server_url }}'}/${'${{ steps.workflow.outputs.repo }}'}/actions/runs/${'${{ steps.workflow.outputs.run_id }}'}`,
-                          inline: false
-                        });
-                        embed.fields.push({
-                          name: 'Failed Job',
-                          value: '${{ needs.test.result || needs.deploy.result || needs.tag_release.result }}',
-                          inline: false
-                        });
-                      }
-
                       await fetch(webhookUrl, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ username: 'Deployment Bot', avatar_url: 'https://cdn-icons-png.flaticon.com/512/2092/2092701.png', embeds: [embed] })
-                      });
+                        body: JSON.stringify({
+                          username: 'Deployment Bot',
+                          avatar_url: 'https://cdn-icons-png.flaticon.com/512/2092/2092701.png',
+                          embeds: [embed]
+                        })
+                      })
 
     health_check:
         runs-on: ubuntu-latest
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         steps:
             - name: Health Check
               id: ping
@@ -206,4 +171,4 @@ jobs:
                           avatar_url: 'https://cdn-icons-png.flaticon.com/512/5957/5957336.png',
                           embeds: [embed]
                         })
-                      });
+                      })
