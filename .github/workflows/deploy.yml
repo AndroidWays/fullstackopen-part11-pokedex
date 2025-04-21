@@ -18,6 +18,7 @@ env:
 jobs:
     test:
         if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request'
         runs-on: ubuntu-latest
         timeout-minutes: 15
         steps:
@@ -60,7 +61,6 @@ jobs:
               with:
                   name: production-build
                   path: dist
-
             - name: Verify build files
               run: |
                   # Check for common index file patterns
