@@ -1,4 +1,4 @@
-name: CI/CD Deployment Pipeline
+name: Pokedex CI/CD Deployment Pipeline
 
 on:
     pull_request:
@@ -108,7 +108,7 @@ jobs:
                       const newTag = '${{ steps.version.outputs.new_tag }}' || 'latest';
 
                       const embed = {
-                        title: status === 'success' ? '🚀 Deployment Successful' : '❌ Pipeline Failed',
+                        title: status === 'success' ? '🚀 A new version of Pokedex Deployed' : '❌ Build/Deployment Failed',
                         color: status === 'success' ? 65280 : 16711680,
                         fields: [
                           {
