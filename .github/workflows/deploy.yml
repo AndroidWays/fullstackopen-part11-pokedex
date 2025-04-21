@@ -94,18 +94,23 @@ jobs:
                   fetch-depth: 0
 
             - name: Check for existing tags
-              id: check-tags
+              id: tag-check
               run: |
-                  if git show-ref --tags | grep -q 'refs/tags/v'; then
+                  # Fetch all tags from remote
+                  git fetch --tags
+
+                  # Check if any version tags exist
+                  if git tag --list 'v*' | grep -q 'v'; then
                     echo "tag_exists=true" >> $GITHUB_OUTPUT
                     echo "Existing version tags found"
+                    git tag --list 'v*'
                   else
                     echo "tag_exists=false" >> $GITHUB_OUTPUT
                     echo "No version tags found"
                   fi
 
-            - name: Bump version (if no tags exist)
-              if: steps.check-tags.outputs.tag_exists == 'false'
+            - name: Bump version
+              if: steps.tag-check.outputs.tag_exists == 'false'
               id: bump-version
               uses: anothrNick/github-tag-action@v1
               with:
@@ -113,13 +118,14 @@ jobs:
                   default-bump: patch
                   with-v: false
 
-            - name: Create new tag
-              if: steps.check-tags.outputs.tag_exists == 'false'
+            - name: Create and push new tag
+              if: steps.tag-check.outputs.tag_exists == 'false'
               run: |
                   git config --global user.name "GitHub Actions"
                   git config --global user.email "actions@github.com"
                   git tag "v${{ steps.bump-version.outputs.new_tag }}"
                   git push origin "v${{ steps.bump-version.outputs.new_tag }}"
+                  echo "Created new tag: v${{ steps.bump-version.outputs.new_tag }}"
 
     health_check:
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
