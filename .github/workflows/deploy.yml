@@ -78,14 +78,17 @@ jobs:
             - name: Check if tag exists
               id: tag_check
               run: |
-                  TAG_EXISTS=$(git tag -l "v${{ steps.version.outputs.new_tag }}")
+                  TAG_EXISTS=$(git tag -l "v*")
                   if [ -n "$TAG_EXISTS" ]; then
-                      echo "Tag v${{ steps.version.outputs.new_tag }} already exists. Skipping tag creation."
+                      echo "Tag v already exists. Skipping tag creation."
                       echo "tag_exists=true" >> $GITHUB_ENV
                   else
-                      echo "Tag v${{ steps.version.outputs.new_tag }} does not exist. Proceeding with tag creation."
+                      echo "Tag v does not exist. Proceeding with tag creation."
                       echo "tag_exists=false" >> $GITHUB_ENV
+                  fi
+
             - name: Bump version
+              if: env.tag_exists == 'false'
               id: version
               uses: anothrNick/github-tag-action@8c8163ef62cf9c4677c8e800f36270af27930f42
               env:
@@ -123,6 +126,7 @@ jobs:
                       const newTag = '${{ steps.version.outputs.new_tag }}' || 'latest';
 
                       const embed = {
+                        title: status === 'success' ? '🚀 A new version of Pokedex Deployed' : '❌ Build/Deployment Failed',
                         title: status === 'success' ? '🚀 A new version of Pokedex Deployed' : '❌ Build/Deployment Failed',
                         color: status === 'success' ? 65280 : 16711680,
                         fields: [
