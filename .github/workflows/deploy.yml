@@ -115,7 +115,7 @@ jobs:
         runs-on: ubuntu-latest
         if: always()
         steps:
-            - name: Prepare data
+            - name: Prepare notification data
               id: prepare
               shell: bash
               run: |
@@ -130,7 +130,8 @@ jobs:
             - name: Send notification
               uses: actions/github-script@v6
               env:
-                  WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
+                  DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+                  DEPLOY_ID: ${{ env.DEPLOY_ID }}
               with:
                   script: |
                       const isHealthCheck = '${{ needs.health_check.result }}' !== 'skipped';
