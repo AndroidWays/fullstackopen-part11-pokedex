@@ -102,8 +102,8 @@ jobs:
               run: echo "Versioning step completed."
 
     health_check:
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         runs-on: ubuntu-latest
+        if: always() # Ensure this job runs in all cases
         outputs:
             status_code: ${{ steps.health.outputs.status_code }}
             response_time: ${{ steps.health.outputs.response_time }}
@@ -136,14 +136,22 @@ jobs:
                       success) echo "✅ success" ;;
                       failure) echo "❌ failure" ;;
                       cancelled) echo "⚠️ cancelled" ;;
+                      skipped) echo "⏭️ skipped" ;;
                       *) echo "❓ $1" ;;
                     esac
                   }
 
+                  # Get health check status - handle case when job was skipped
+                  if [[ '${{ needs.health_check.result }}' == '' ]]; then
+                    health_status="⏭️ skipped"
+                  else
+                    health_status=$(status_emoji '${{ needs.health_check.result }}')
+                  fi
+
                   echo "test_status=$(status_emoji '${{ needs.test.result }}')" >> $GITHUB_OUTPUT
                   echo "deploy_status=$(status_emoji '${{ needs.deploy.result }}')" >> $GITHUB_OUTPUT
                   echo "tag_status=$(status_emoji '${{ needs.tag_release.result }}')" >> $GITHUB_OUTPUT
-                  echo "health_status=$(status_emoji '${{ needs.health_check.result }}')" >> $GITHUB_OUTPUT
+                  echo "health_status=$health_status" >> $GITHUB_OUTPUT
 
             - name: Discord notification
               env:
