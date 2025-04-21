@@ -6,6 +6,7 @@ on:
         branches: [main]
     schedule:
         - cron: '0 12 * * *' # Daily at 12:00 UTC
+        - cron: '0 0 * * *'  # Another cron schedule
     workflow_dispatch:
 
 jobs:
@@ -71,15 +72,6 @@ jobs:
                   retry-delay: 5s
                   retry-all: false
 
-            - name: Check the deployed service URL
-              uses: jtalk/url-health-check-action@v4
-              with:
-                  url: https://fullstackopen-part11-pokedex.onrender.com/
-                  follow-redirect: false
-                  max-attempts: 3
-                  retry-delay: 5s
-                  retry-all: false
-
     tag_release:
         if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
         needs: [test, deploy]
@@ -98,7 +90,8 @@ jobs:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   DEFAULT_BUMP: patch
                   WITH_V: false
-            - name: Create new tag
+            - name: Create new tag if it doesn't exist
+              if: env.tag_exists == 'false'
               run: |
                   git tag "v${{ steps.version.outputs.new_tag }}"
                   git push origin "v${{ steps.version.outputs.new_tag }}"
@@ -107,30 +100,37 @@ jobs:
         needs: [test, deploy, tag_release]
         runs-on: ubuntu-latest
         if: always()
-        if: always()
         steps:
             - name: Send Discord notification
               uses: actions/github-script@v6
               with:
                   script: |
-                      const webhook = '${{ secrets.DISCORD_WEBHOOK }}'
-                      const status = '${{ job.status }}'
-                      const color = status === 'success' ? 65280 : 16711680
-                      await fetch(webhook, {
+                      const webhookUrl = '${{ secrets.DISCORD_WEBHOOK }}';
+                      const status = '${{ job.status }}';
+                      const deployId = process.env.DEPLOY_ID || 'N/A';
+                      const newTag = '${{ steps.version.outputs.new_tag }}' || 'latest';
+
+                      const embed = {
+                        title: status === 'success' ? '🚀 A new version of Pokedex Deployed' : '❌ Build/Deployment Failed',
+                        color: status === 'success' ? 65280 : 16711680,
+                        fields: [
+                          { name: 'Status', value: status === 'success' ? 'Success' : 'Failed', inline: true },
+                          { name: 'Version', value: newTag, inline: true },
+                          { name: 'Deploy ID', value: deployId, inline: true },
+                          { name: 'Commit', value: `[${'${{ steps.workflow.outputs.sha }}'}](${'${{ steps.workflow.outputs.server_url }}'}/${'${{ steps.workflow.outputs.repo }}'}/commit/${'${{ github.sha }}'})`, inline: false },
+                          { name: 'PR', value: `#${'${{ steps.workflow.outputs.pr_number }}'}`, inline: true },
+                          { name: 'By', value: '${{ steps.workflow.outputs.actor }}', inline: true }
+                        ],
+                        timestamp: new Date().toISOString()
+                      };
+
+                      await fetch(webhookUrl, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                          username: 'CI/CD Bot',
-                          embeds: [{
-                            title: status === 'success' ? '✅ Deployment Successful' : '❌ Deployment Failed',
-                            color,
-                            fields: [
-                              { name: 'Repository', value: '${{ github.repository }}', inline: true },
-                              { name: 'Status', value: status, inline: true },
-                              { name: 'Event', value: '${{ github.event_name }}', inline: true }
-                            ],
-                            timestamp: new Date().toISOString()
-                          }]
+                          username: 'Deployment Bot',
+                          avatar_url: 'https://cdn-icons-png.flaticon.com/512/2092/2092701.png',
+                          embeds: [embed]
                         })
                       })
 
@@ -138,36 +138,37 @@ jobs:
         runs-on: ubuntu-latest
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         steps:
-            - name: Check the deployed service URL
-              id: urlcheck
-              uses: jtalk/url-health-check-action@v4
+            - name: Health Check
+              id: ping
+              uses: Jtalk/url-health-check-action@v3
               with:
-                  url: https://fullstackopen-part11-pokedex.onrender.com/
-                  follow-redirect: false
+                  url: 'https://fullstackopen-part11-pokedex.onrender.com/'
                   max-attempts: 3
-                  retry-delay: 5s
-                  retry-all: false
+                  retry-delay: 10
+                  follow-redirect: true
 
-            - name: Notify Discord Health Check
-              if: always()
+            - name: Send Health Check Result to Discord
               uses: actions/github-script@v6
               with:
                   script: |
-                      const webhook = '${{ secrets.DISCORD_WEBHOOK }}'
-                      const passed = '${{ steps.urlcheck.outcome }}' === 'success'
-                      await fetch(webhook, {
+                      const webhookUrl = '${{ secrets.DISCORD_WEBHOOK }}';
+                      const status = '${{ job.status }}';
+                      const embed = {
+                        title: status === 'success' ? '✅ Pokedex Health Check Passed' : '❌ Pokedex Health Check Failed',
+                        color: status === 'success' ? 65280 : 16711680,
+                        fields: [
+                          { name: 'Checked URL', value: 'https://fullstackopen-part11-pokedex.onrender.com/' },
+                          { name: 'Status', value: status === 'success' ? 'Up and running' : 'Service might be down' }
+                        ],
+                        timestamp: new Date().toISOString()
+                      };
+
+                      await fetch(webhookUrl, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                          username: 'Health Check Bot',
-                          embeds: [{
-                            title: passed ? '✅ Health Check Passed' : '❌ Health Check Failed',
-                            color: passed ? 65280 : 16711680,
-                            fields: [
-                              { name: 'URL', value: 'https://fullstackopen-part11-pokedex.onrender.com/' },
-                              { name: 'Result', value: passed ? 'OK' : 'DOWN' }
-                            ],
-                            timestamp: new Date().toISOString()
-                          }]
+                          username: 'Health Bot',
+                          avatar_url: 'https://cdn-icons-png.flaticon.com/512/5957/5957336.png',
+                          embeds: [embed]
                         })
                       })
