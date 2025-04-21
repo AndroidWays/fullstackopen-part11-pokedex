@@ -75,6 +75,16 @@ jobs:
               with:
                   ref: ${{ github.event.pull_request.merge_commit_sha }}
                   fetch-depth: '0'
+            - name: Check if tag exists
+              id: tag_check
+              run: |
+                  TAG_EXISTS=$(git tag -l "v${{ steps.version.outputs.new_tag }}")
+                  if [ -n "$TAG_EXISTS" ]; then
+                      echo "Tag v${{ steps.version.outputs.new_tag }} already exists. Skipping tag creation."
+                      echo "tag_exists=true" >> $GITHUB_ENV
+                  else
+                      echo "Tag v${{ steps.version.outputs.new_tag }} does not exist. Proceeding with tag creation."
+                      echo "tag_exists=false" >> $GITHUB_ENV
             - name: Bump version
               id: version
               uses: anothrNick/github-tag-action@8c8163ef62cf9c4677c8e800f36270af27930f42
@@ -82,11 +92,16 @@ jobs:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   DEFAULT_BUMP: patch
                   WITH_V: false
+            - name: Create new tag if it doesn't exist
+              if: env.tag_exists == 'false'
+              run: |
+                  git tag "v${{ steps.version.outputs.new_tag }}"
+                  git push origin "v${{ steps.version.outputs.new_tag }}"
 
     notify:
         needs: [test, deploy, tag_release]
         runs-on: ubuntu-latest
-        if: always() # This ensures the job runs regardless of success/failure
+        if: always()
         steps:
             - name: Get workflow details
               id: workflow
