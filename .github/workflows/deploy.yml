@@ -1,4 +1,5 @@
 name: Pokedex CI/CD Deployment Pipeline
+name: Pokedex CI/CD Deployment Pipeline
 
 on:
     pull_request:
@@ -95,11 +96,16 @@ jobs:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   DEFAULT_BUMP: patch
                   WITH_V: false
+            - name: Create new tag if it doesn't exist
+              if: env.tag_exists == 'false'
+              run: |
+                  git tag "v${{ steps.version.outputs.new_tag }}"
+                  git push origin "v${{ steps.version.outputs.new_tag }}"
 
     notify:
         needs: [test, deploy, tag_release]
         runs-on: ubuntu-latest
-        if: always()
+        if: always() # This ensures the job runs regardless of success/failure
         steps:
             - name: Get workflow details
               id: workflow
@@ -121,6 +127,7 @@ jobs:
                       const newTag = '${{ steps.version.outputs.new_tag }}' || 'latest';
 
                       const embed = {
+                        title: status === 'success' ? '🚀 A new version of Pokedex Deployed' : '❌ Build/Deployment Failed',
                         title: status === 'success' ? '🚀 A new version of Pokedex Deployed' : '❌ Build/Deployment Failed',
                         color: status === 'success' ? 65280 : 16711680,
                         fields: [
