@@ -102,6 +102,10 @@ jobs:
                   else
                       echo "Tag v does not exist. Proceeding with tag creation."
                       echo "tag_exists=false" >> $GITHUB_ENV
+
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
               continue-on-error: true
             - name: Bump version
               if: env.tag_exists == 'false'
