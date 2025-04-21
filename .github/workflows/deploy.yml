@@ -93,39 +93,57 @@ jobs:
                   ref: ${{ github.event.pull_request.merge_commit_sha }}
                   fetch-depth: 0
 
-            - name: Check for existing tags
-              id: tag-check
+            - name: Check for existing tag for this commit
+              id: check-existing-tag
               run: |
-                  # Fetch all tags from remote
-                  git fetch --tags
-
-                  # Check if any version tags exist
-                  if git tag --list 'v*' | grep -q 'v'; then
+                  EXISTING_TAG=$(git tag --points-at HEAD | grep '^v')
+                  if [ -n "$EXISTING_TAG" ]; then
                     echo "tag_exists=true" >> $GITHUB_OUTPUT
-                    echo "Existing version tags found"
-                    git tag --list 'v*'
+                    echo "version_tag=$EXISTING_TAG" >> $GITHUB_OUTPUT
+                    echo "Commit already tagged with: $EXISTING_TAG"
+                    exit 0
                   else
                     echo "tag_exists=false" >> $GITHUB_OUTPUT
-                    echo "No version tags found"
+                    echo "No version tag exists for this commit"
                   fi
 
+            - name: Get latest version from repo
+              if: steps.check-existing-tag.outputs.tag_exists == 'false'
+              id: get-latest-version
+              run: |
+                  git fetch --tags
+                  LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n1)
+                  if [ -z "$LATEST_TAG" ]; then
+                    echo "base_version=v0.0.0" >> $GITHUB_OUTPUT
+                  else
+                    echo "base_version=$LATEST_TAG" >> $GITHUB_OUTPUT
+                  fi
+                  echo "Using base version: ${{ steps.get-latest-version.outputs.base_version }}"
+
             - name: Bump version
-              if: steps.tag-check.outputs.tag_exists == 'false'
+              if: steps.check-existing-tag.outputs.tag_exists == 'false'
               id: bump-version
               uses: anothrNick/github-tag-action@v1
               with:
                   github-token: ${{ secrets.GITHUB_TOKEN }}
                   default-bump: patch
                   with-v: false
+              env:
+                  DEFAULT_VERSION: ${{ steps.get-latest-version.outputs.base_version }}
 
             - name: Create and push new tag
-              if: steps.tag-check.outputs.tag_exists == 'false'
+              if: steps.check-existing-tag.outputs.tag_exists == 'false'
               run: |
                   git config --global user.name "GitHub Actions"
                   git config --global user.email "actions@github.com"
-                  git tag "v${{ steps.bump-version.outputs.new_tag }}"
-                  git push origin "v${{ steps.bump-version.outputs.new_tag }}"
-                  echo "Created new tag: v${{ steps.bump-version.outputs.new_tag }}"
+                  NEW_TAG="v${{ steps.bump-version.outputs.new_tag }}"
+                  git tag $NEW_TAG
+                  git push origin $NEW_TAG
+                  echo "Created new tag: $NEW_TAG"
+
+            - name: Skip notice
+              if: steps.check-existing-tag.outputs.tag_exists == 'true'
+              run: echo "Skipping tag creation - commit already tagged with ${{ steps.check-existing-tag.outputs.version_tag }}"
 
     health_check:
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
