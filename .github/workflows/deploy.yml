@@ -1,9 +1,10 @@
 name: Pokedex CI/CD Pipeline with Health Monitoring
 
 on:
-    pull_request:
-        types: [closed]
+    push:
         branches: [main]
+    pull_request:
+        types: [opened, synchronize, closed]
     schedule:
         - cron: '0 8 * * *'
     workflow_dispatch:
@@ -17,7 +18,6 @@ env:
 
 jobs:
     test:
-        if: github.event_name == 'pull_request'
         runs-on: ubuntu-latest
         timeout-minutes: 15
         steps:
@@ -29,20 +29,20 @@ jobs:
             - run: npm ci --audit=false
             - run: npx playwright install --with-deps
             - run: |
-                  npm run lint || exit 1
-                  npm run build || exit 1
-                  npm test || exit 1
-                  npm run test:e2e || exit 1
+                  npm run lint
+                  npm run build
+                  npm test
+                  npm run test:e2e
             - uses: actions/upload-artifact@v4
-              if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
+              if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip'))
               with:
                   name: production-build
                   path: dist/
                   retention-days: 1
 
     deploy:
-        if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
         needs: test
+        if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip'))
         runs-on: ubuntu-latest
         permissions:
             contents: write
@@ -56,7 +56,6 @@ jobs:
               run: |
                   [ -f dist/index.html ] || { echo "::error::index.html missing!"; exit 1; }
                   [ -f dist/bundle.js ] || { echo "::error::bundle.js missing!"; exit 1; }
-
             - name: Deploy to Render
               run: |
                   DEPLOY_RESPONSE=$(curl -s -X POST \
@@ -70,91 +69,47 @@ jobs:
               env:
                   RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
                   RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
-
-            - name: Check the deployed service URL
+            - name: Check deployed service
               uses: jtalk/url-health-check-action@v4
               with:
-                  url: https://fullstackopen-part11-pokedex.onrender.com/
+                  url: ${{ env.APP_URL }}
                   follow-redirect: false
                   max-attempts: 3
                   retry-delay: 5s
                   retry-all: false
+            - name: Deployment outcome
+              run: echo "Deployment step completed."
+              if: always()
 
     tag_release:
-        if: github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip')
         needs: [test, deploy]
+        if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '#skip'))
         runs-on: ubuntu-latest
-        timeout-minutes: 5
         permissions:
             contents: write
         steps:
             - uses: actions/checkout@v4
               with:
-                  ref: ${{ github.event.pull_request.merge_commit_sha }}
                   fetch-depth: 0
-
-            - name: Check for existing tag for this commit
-              id: check-existing-tag
-              run: |
-                  EXISTING_TAG=$(git tag --points-at HEAD | grep '^v')
-                  if [ -n "$EXISTING_TAG" ]; then
-                    echo "tag_exists=true" >> $GITHUB_OUTPUT
-                    echo "version_tag=$EXISTING_TAG" >> $GITHUB_OUTPUT
-                    echo "Commit already tagged with: $EXISTING_TAG"
-                    exit 0
-                  else
-                    echo "tag_exists=false" >> $GITHUB_OUTPUT
-                    echo "No version tag exists for this commit"
-                  fi
-
-            - name: Get latest version from repo
-              if: steps.check-existing-tag.outputs.tag_exists == 'false'
-              id: get-latest-version
-              run: |
-                  git fetch --tags
-                  LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n1)
-                  if [ -z "$LATEST_TAG" ]; then
-                    echo "base_version=v0.0.0" >> $GITHUB_OUTPUT
-                  else
-                    echo "base_version=$LATEST_TAG" >> $GITHUB_OUTPUT
-                  fi
-                  echo "Using base version: ${{ steps.get-latest-version.outputs.base_version }}"
-
-            - name: Bump version
-              if: steps.check-existing-tag.outputs.tag_exists == 'false'
-              id: bump-version
+            - name: Bump version and push tag
               uses: anothrNick/github-tag-action@v1
-              with:
-                  github-token: ${{ secrets.GITHUB_TOKEN }}
-                  default-bump: patch
-                  with-v: false
               env:
-                  DEFAULT_VERSION: ${{ steps.get-latest-version.outputs.base_version }}
-
-            - name: Create and push new tag
-              if: steps.check-existing-tag.outputs.tag_exists == 'false'
-              run: |
-                  git config --global user.name "GitHub Actions"
-                  git config --global user.email "actions@github.com"
-                  NEW_TAG="v${{ steps.bump-version.outputs.new_tag }}"
-                  git tag $NEW_TAG
-                  git push origin $NEW_TAG
-                  echo "Created new tag: $NEW_TAG"
-
-            - name: Skip notice
-              if: steps.check-existing-tag.outputs.tag_exists == 'true'
-              run: echo "Skipping tag creation - commit already tagged with ${{ steps.check-existing-tag.outputs.version_tag }}"
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  DEFAULT_BUMP: patch
+                  WITH_V: true
+            - name: Versioning outcome
+              if: always()
+              run: echo "Versioning step completed."
 
     health_check:
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         runs-on: ubuntu-latest
-        timeout-minutes: 5
         outputs:
             status_code: ${{ steps.health.outputs.status_code }}
             response_time: ${{ steps.health.outputs.response_time }}
             version: ${{ steps.version.outputs.version }}
         steps:
-            - name: Check application health
+            - name: Check health
               id: health
               run: |
                   status_code=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.APP_URL }}${{ env.HEALTH_ENDPOINT }} || echo "500")
@@ -162,63 +117,48 @@ jobs:
                   echo "status_code=$status_code" >> $GITHUB_OUTPUT
                   echo "response_time=$response_time" >> $GITHUB_OUTPUT
                   [ "$status_code" -eq 200 ] || exit 1
-
-            - name: Get version info
+            - name: Get version
               id: version
               run: |
                   version=$(curl -s ${{ env.APP_URL }}${{ env.VERSION_ENDPOINT }} | jq -r '.version // "unknown"' || echo "unknown")
                   echo "version=$version" >> $GITHUB_OUTPUT
 
     notify:
-        needs:
-            - test
-            - deploy
-            - tag_release
-            - health_check
+        needs: [test, deploy, tag_release, health_check]
         runs-on: ubuntu-latest
         if: always()
         steps:
-            - name: Prepare data
-              id: prepare
+            - name: Set status emoji
+              id: set-status
               run: |
-                  echo "sha=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
-                  echo "repo=$GITHUB_REPOSITORY" >> $GITHUB_OUTPUT
-                  echo "run_url=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> $GITHUB_OUTPUT
+                  function status_emoji() {
+                    case "$1" in
+                      success) echo "✅ success" ;;
+                      failure) echo "❌ failure" ;;
+                      cancelled) echo "⚠️ cancelled" ;;
+                      *) echo "❓ $1" ;;
+                    esac
+                  }
 
-            - name: Send notification
-              uses: actions/github-script@v6
+                  echo "test_status=$(status_emoji '${{ needs.test.result }}')" >> $GITHUB_OUTPUT
+                  echo "deploy_status=$(status_emoji '${{ needs.deploy.result }}')" >> $GITHUB_OUTPUT
+                  echo "tag_status=$(status_emoji '${{ needs.tag_release.result }}')" >> $GITHUB_OUTPUT
+                  echo "health_status=$(status_emoji '${{ needs.health_check.result }}')" >> $GITHUB_OUTPUT
+
+            - name: Discord notification
               env:
-                  WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
+                  DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+              uses: Ilshidur/action-discord@0c4b27844ba47cb1c7bee539c8eead5284ce9fa9
               with:
-                  script: |
-                      const healthy = '${{ needs.health_check.result }}' === 'success';
-                      const healthOutputs = {
-                        status: '${{ needs.health_check.outputs.status_code }}',
-                        time: '${{ needs.health_check.outputs.response_time }}',
-                        version: '${{ needs.health_check.outputs.version }}',
-                      };
+                  args: |
+                      @simotoivanentivi23v0603
 
-                      const deploymentSuccess = '${{ job.status }}' === 'success';
-                      const runUrl = '${{ steps.prepare.outputs.run_url }}';
-                      const sha = '${{ steps.prepare.outputs.sha }}';
+                      *${{ github.actor }}* triggered a ${{ github.event_name }} on **${{ github.repository }}**.
 
-                      const embed = {
-                        title: healthy ? '✅ Health Check Passed' : '❌ Health Check Failed',
-                        color: healthy ? 5763719 : 15548997,
-                        fields: [
-                          { name: 'Status Code', value: healthOutputs.status, inline: true },
-                          { name: 'Response Time', value: healthOutputs.time + 's', inline: true },
-                          { name: 'Version', value: healthOutputs.version, inline: true },
-                          { name: 'Details', value: `[View Run](${runUrl})`, inline: false }
-                        ]
-                      };
+                      **Commit:** [View commit](<https://github.com/${{ github.repository }}/commit/${{ github.sha }}>)  
 
-                      await fetch(process.env.WEBHOOK_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          username: 'Pokedex CI/CD',
-                          avatar_url: '${{ env.DISCORD_AVATAR }}',
-                          embeds: [embed]
-                        })
-                      });
+                      **Status:**
+                      🔹 **Tests:** ${{ steps.set-status.outputs.test_status }}  
+                      🔹 **Deployment:** ${{ steps.set-status.outputs.deploy_status }}  
+                      🔹 **Version Tag:** ${{ steps.set-status.outputs.tag_status }}  
+                      🔹 **Health Check:** ${{ steps.set-status.outputs.health_status }}
