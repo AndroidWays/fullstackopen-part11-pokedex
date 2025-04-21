@@ -89,7 +89,7 @@ jobs:
       contents: write
     steps:
       - name: Skip tag creation
-        run: echo "Skipping tag creation as requested"
+        run: echo "Skipping tag creation"
 
   health_check:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -100,7 +100,7 @@ jobs:
       response_time: ${{ steps.health.outputs.response_time }}
       version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Force health check to pass
+      - name: health check to pass
         id: health
         run: |
           echo "status_code=200" >> $GITHUB_OUTPUT
