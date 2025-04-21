@@ -86,7 +86,7 @@ jobs:
     notify:
         needs: [test, deploy, tag_release]
         runs-on: ubuntu-latest
-        if: always()
+        if: always() # This ensures the job runs regardless of success/failure
         steps:
             - name: Get workflow details
               id: workflow
